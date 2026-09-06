@@ -1,0 +1,42 @@
+use crate::models::{Thing, User};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use utoipa::ToSchema;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct WikiPageListing {
+	pub kind: String,
+	pub data: Vec<String>,
+	#[serde(flatten)]
+	pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct WikiPage {
+	pub kind: String,
+	pub data: WikiPageData,
+	#[serde(flatten)]
+	pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct WikiPageData {
+	pub may_revise: bool,
+	pub revision_date: Option<f64>,
+	pub content_html: String,
+	pub revision_by: Option<Thing<User>>,
+	pub content_md: String,
+	#[serde(flatten)]
+	pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct WikiRevision {
+	pub timestamp: Option<f64>,
+	pub reason: Option<String>,
+	pub author: Option<Thing<User>>,
+	pub page: String,
+	pub id: String,
+	#[serde(flatten)]
+	pub extra: Map<String, Value>,
+}

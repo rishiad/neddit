@@ -1,0 +1,18 @@
+<li class="story{% if item.stickied %} story-pinned{% endif %}">
+  <div class="score" aria-label="{{ item.score }} points">
+    <strong>{{ item.score }}</strong>
+  </div>
+  <article class="story-body">
+    <div class="title-line">
+      <a class="story-title" href="{{ item.href }}">{{ item.title }}</a>
+      {% if item.show_domain %}<span class="domain">({{ item.domain }})</span>{% endif %}
+      {% for badge in item.badges %}<span class="badge">{{ badge }}</span>{% endfor %}
+    </div>
+    <div class="metadata">
+      <span>by {{ item.author }}</span>
+      <span>in r/{{ item.subreddit }}</span>
+      <span>{{ item.age }}</span>
+      <a href="{{ item.permalink }}">{{ item.comments }} comments</a>
+    </div>
+  </article>
+</li>

@@ -36,23 +36,29 @@
           filter = craneLib.filterCargoSources;
         };
 
-        neddit = craneLib.buildPackage {
+        package = cargoExtraArgs: craneLib.buildPackage {
           inherit src;
           strictDeps = true;
           doCheck = false;
 
+          inherit cargoExtraArgs;
           CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
           CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
         };
+
+        nedditApi = package "-p neddit-api";
+        nedditWeb = package "-p neddit-web";
       in
       {
         checks = {
-          neddit = neddit;
+          neddit-api = nedditApi;
+          neddit-web = nedditWeb;
         };
 
         packages = {
-          default = neddit;
-          neddit = neddit;
+          default = nedditApi;
+          neddit-api = nedditApi;
+          neddit-web = nedditWeb;
         };
       }) // {
         nixosModules.default = import ./nix/module.nix { inherit self; };

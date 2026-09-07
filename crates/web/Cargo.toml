@@ -1,0 +1,26 @@
+[package]
+name = "neddit-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+askama = "0.16.1"
+askama_web = { version = "0.16.0", features = ["axum-0.8", "tracing-0.1"] }
+axum = "0.8.9"
+neddit-api = { path = "../api" }
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.17"
+tokio = { version = "1.49", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tower-http = { version = "0.7.1", features = ["compression-br", "compression-gzip", "trace"] }
+tower-livereload = "0.10.3"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+url = "2.5.8"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

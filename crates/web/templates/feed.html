@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Neddit</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/" aria-label="Neddit home">
+        <span class="brand-mark" aria-hidden="true">n</span>
+      </a>
+      <nav class="feed-sorts" aria-label="Front page sorting">
+        {% for sort in sorts %}
+          <a class="sort-link{% if sort.active %} active{% endif %}" href="{{ sort.href }}"{% if sort.active %} aria-current="page"{% endif %}>{{ sort.label }}</a>
+        {% endfor %}
+      </nav>
+    </div>
+  </header>
+
+  <main class="page">
+    <ol class="feed" aria-label="Front page posts">
+      {% for item in items %}
+        {% include "partials/feed_item.html" %}
+      {% endfor %}
+    </ol>
+
+    {% if has_next %}
+      <nav class="pagination" aria-label="Feed pagination">
+        <a href="{{ next_url }}">Next page <span aria-hidden="true">→</span></a>
+      </nav>
+    {% endif %}
+  </main>
+</body>
+</html>

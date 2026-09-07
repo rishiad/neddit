@@ -1,42 +1,11 @@
-[package]
-name = "neddit"
+[workspace]
+members = ["crates/api", "crates/web"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.81"
-default-run = "neddit"
-
-[dependencies]
-axum = "0.8.4"
-clap = { version = "4.4.11", default-features = false, features = [
-    "std",
-    "env",
-    "derive",
-] }
-regex = "1.10.2"
-serde = { version = "1.0.193", features = ["derive"] }
-futures-lite = "2.2.0"
-percent-encoding = "2.3.1"
-serde_json = "1.0.133"
-tokio = { version = "1.44.2", features = ["full"] }
-thiserror = "2.0.12"
-tower = { version = "0.5.2", features = ["util"] }
-tower-http = { version = "0.6.6", features = ["compression-br", "compression-gzip"] }
-utoipa = { version = "5.5.0", features = ["axum_extras"] }
-utoipa-axum = "0.2.0"
-url = "2.5.0"
-uuid = { version = "1.6.1", features = ["v4"] }
-base64 = "0.22.1"
-fastrand = "2.0.1"
-log = "0.4.20"
-pretty_env_logger = "0.5.0"
-async-recursion = "1.1.1"
-tegen = "0.1.4"
-fake_user_agent = "0.2.2"
-wreq = { version = "6.0.0-rc.28", features = ["brotli", "gzip", "deflate", "zstd", "json", "stream", "socks"] }
-wreq-util = { version = "3.0.0-rc.10" }
-hmac = "0.12.1"
-sha2 = "0.10.8"
-getrandom = "0.3.1"
+rust-version = "1.85"
 
 [profile.release]
 codegen-units = 1

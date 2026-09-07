@@ -3,11 +3,11 @@
 use clap::{Arg, ArgAction, Command};
 
 use log::{info, warn};
-use neddit::api;
-use neddit::client::RedditClient;
-use neddit::media::MediaSigner;
-use neddit::server;
-use neddit::service::RedditService;
+use neddit_api::api;
+use neddit_api::client::RedditClient;
+use neddit_api::media::MediaSigner;
+use neddit_api::server;
+use neddit_api::service::RedditService;
 use std::path::Path;
 
 #[tokio::main]

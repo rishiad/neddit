@@ -1,0 +1,260 @@
+:root {
+  color-scheme: light;
+  --background: #fefefe;
+  --text: #333;
+  --muted: rgb(51 51 51 / 59%);
+  --link: rgb(28 89 209);
+  --visited: rgb(95 134 212);
+  --accent: rgb(172 19 13);
+  --tag-background: #fffcd7;
+  --tag-border: #d5d458;
+  --special-tag-background: #f9ddde;
+  --special-tag-border: #f0b2b8;
+  font-family: "Helvetica Neue", Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 1rem;
+  overflow-y: scroll;
+  -moz-text-size-adjust: none;
+  -webkit-text-size-adjust: none;
+}
+
+body {
+  min-width: 300px;
+  margin: 0 auto;
+  padding-bottom: 2em;
+  background: var(--background);
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.45em;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+
+.site-header {
+  font-weight: bold;
+  line-height: 18px;
+}
+
+.header-inner {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+}
+
+.brand {
+  display: flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.brand:hover {
+  text-decoration: none;
+}
+
+.brand-mark {
+  font: 700 1.5rem Georgia, serif;
+}
+
+.feed-sorts {
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.sort-link {
+  margin: 0 0.25rem;
+  color: rgb(51 51 51 / 67%);
+  font-size: 1rem;
+  font-weight: bold;
+}
+
+.sort-link:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.sort-link.active {
+  border-bottom: 0.25em solid var(--accent);
+  padding: 0 0.25rem 0.25rem;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.page {
+  margin-top: 0.5rem;
+  margin-right: 10px;
+  margin-left: 36px;
+}
+
+.feed {
+  margin: 0 0 0 -32px;
+  padding: 0;
+  list-style: none;
+}
+
+.story {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  clear: both;
+}
+
+.score {
+  width: 30px;
+  padding-top: 0.35em;
+  color: var(--muted);
+  text-align: center;
+}
+
+.score strong {
+  color: inherit;
+  font: inherit;
+}
+
+.story-body {
+  min-width: 0;
+  padding: 0.25em 0;
+  overflow-wrap: break-word;
+}
+
+.story:first-child .story-body {
+  padding-top: 0.5em;
+}
+
+.story:first-child .score {
+  padding-top: 0.6em;
+}
+
+.title-line {
+  min-width: 0;
+}
+
+.story-title {
+  color: var(--link);
+  font-size: 1rem;
+  font-weight: bold;
+  vertical-align: middle;
+}
+
+.story-title:visited {
+  color: var(--visited);
+}
+
+.domain {
+  margin-left: 0.25em;
+  color: var(--muted);
+  font-style: italic;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 0.25em;
+  padding: 0 0.4em 1px;
+  border: 1px solid var(--special-tag-border);
+  border-radius: 5px;
+  background: var(--special-tag-background);
+  color: rgb(51 51 51 / 84%);
+  font-size: 0.66rem;
+  line-height: 1.45em;
+  text-decoration: none;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.65em;
+  margin-top: 1px;
+  color: var(--muted);
+}
+
+.metadata a {
+  color: var(--muted);
+}
+
+.pagination {
+  margin-top: 1.5em;
+  padding: 0;
+  text-align: left;
+}
+
+.pagination a {
+  color: rgb(51 51 51 / 75%);
+  font-weight: bold;
+}
+
+@media screen and (min-width: 481px) {
+  body {
+    max-width: 60rem;
+  }
+
+  .site-header {
+    margin: 1em 0 0.5rem;
+  }
+
+  .header-inner {
+    padding: 5px 10px;
+  }
+}
+
+@media only screen and (max-width: 480px) {
+  .site-header {
+    height: 44px;
+    border-bottom: 1px solid #ccc;
+    background: #eee;
+  }
+
+  .header-inner {
+    height: 44px;
+    padding: 0.75rem 0.5rem 0;
+    align-items: start;
+  }
+
+  .page {
+    margin: 0.5rem;
+  }
+
+  .feed {
+    margin-left: -0.5rem;
+  }
+
+  .story {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .score {
+    margin-left: 0.25em;
+    padding-top: 0.6em;
+  }
+
+  .story-body {
+    padding-top: 0.5em;
+    padding-bottom: 0.75em;
+  }
+}

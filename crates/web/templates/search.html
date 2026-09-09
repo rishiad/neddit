@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Search · Neddit{% endblock %}
+
+{% block content %}
+  <form class="search-form" action="/search" method="get">
+    <div class="search-query">
+      <label class="visually-hidden" for="search-q">Search query</label>
+      <input id="search-q" name="q" type="search" value="{{ query }}" maxlength="512" autocapitalize="off" autofocus required>
+      <button type="submit">Search</button>
+    </div>
+
+    <div class="search-primary-controls">
+      <fieldset>
+        <legend>Search</legend>
+        <div class="search-choices">
+          {% for choice in kinds %}
+            <label><input type="radio" name="kind" value="{{ choice.value }}"{% if choice.checked %} checked{% endif %}> {{ choice.label }}</label>
+          {% endfor %}
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Order by</legend>
+        <div class="search-choices">
+          {% for choice in sorts %}
+            <label><input type="radio" name="sort" value="{{ choice.value }}"{% if choice.checked %} checked{% endif %}> {{ choice.label }}</label>
+          {% endfor %}
+        </div>
+      </fieldset>
+    </div>
+
+    <details class="search-advanced"{% if advanced_open %} open{% endif %}>
+      <summary>Advanced filters</summary>
+      <div class="search-advanced-grid">
+        <label>
+          <span>Within community <small>(posts only)</small></span>
+          <span class="search-community-prefix">r/ <input name="community" value="{{ community }}" autocapitalize="off" spellcheck="false"></span>
+        </label>
+        <label>
+          <span>Time range</span>
+          <select name="time">
+            {% for choice in times %}<option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>Results per page</span>
+          <select name="limit">
+            {% for choice in limits %}<option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
+          </select>
+        </label>
+      </div>
+    </details>
+  </form>
+
+  {% if searched %}
+    <section class="search-results" aria-labelledby="search-results-heading">
+      <h1 id="search-results-heading">{{ result_count }} results on this page for <span class="search-term">{{ query }}</span></h1>
+      {% if result_count == 0 %}
+        <p class="comments-empty">No results matched these filters.</p>
+      {% else %}
+        <ol class="feed" aria-label="Search results">
+          {% for result in results %}
+            <li class="story search-result">
+              <div class="score" aria-label="{{ result.metric }} {{ result.metric_label }}">{{ result.metric }}</div>
+              <article class="story-body">
+                <div class="title-line">
+                  <a class="story-title" href="{{ result.href }}">{{ result.title }}</a>
+                  {% match result.domain %}
+                    {% when Some with (domain) %}<span class="domain">({{ domain }})</span>
+                    {% when None %}
+                  {% endmatch %}
+                </div>
+                {% match result.summary %}
+                  {% when Some with (summary) %}<p class="search-summary">{{ summary }}</p>
+                  {% when None %}
+                {% endmatch %}
+                <div class="metadata">
+                  {% for value in result.metadata %}<span>{{ value }}</span>{% endfor %}
+                </div>
+              </article>
+            </li>
+          {% endfor %}
+        </ol>
+      {% endif %}
+      {% if has_next %}
+        <nav class="pagination" aria-label="Search pagination"><a href="{{ next_url }}">More</a></nav>
+      {% endif %}
+    </section>
+  {% else %}
+    <section class="search-help">
+      <h1>Search Reddit</h1>
+      <ul>
+        <li>Use quotation marks for an exact phrase.</li>
+        <li>Choose a community to search only its posts.</li>
+        <li>Use the time range with Top or Comments to narrow broad searches.</li>
+      </ul>
+    </section>
+  {% endif %}
+{% endblock %}

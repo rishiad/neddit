@@ -26,6 +26,7 @@ const CONTENT_SECURITY_POLICY: &str =
 pub fn router(service: RedditService) -> Router {
 	let app = Router::new()
 		.route("/", get(app::front_page))
+		.route("/search", get(app::search_page))
 		.route("/more-comments", get(app::more_comments))
 		.route("/r/{subreddit}", get(app::subreddit_feed))
 		.route("/r/{subreddit}/wiki", get(app::wiki_root))

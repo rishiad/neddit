@@ -55,7 +55,23 @@ a:focus-visible {
 }
 
 .header-inner {
+  display: grid;
+  gap: 0.25rem;
   width: 100%;
+}
+
+.site-nav {
+  display: flex;
+  gap: 0.65em;
+  margin-bottom: 1em;
+}
+
+.site-nav a {
+  color: rgb(51 51 51 / 67%);
+}
+
+.site-nav .site-name {
+  color: var(--accent);
 }
 
 .feed-sorts {
@@ -72,6 +88,11 @@ a:focus-visible {
   font-weight: bold;
 }
 
+.feed-sorts .sort-link:first-child,
+.community-sorts .sort-link:first-child {
+  margin-left: 0;
+}
+
 .sort-link:hover {
   color: var(--text);
   text-decoration: none;
@@ -79,7 +100,7 @@ a:focus-visible {
 
 .sort-link.active {
   border-bottom: 0.25em solid var(--accent);
-  padding: 0 0.25rem 0.25rem;
+  padding: 0 0 0.25rem;
   color: var(--text);
   text-decoration: none;
 }
@@ -534,6 +555,7 @@ a:focus-visible {
 
 .community-sorts {
   margin-bottom: 0.5em;
+  margin-left: -40px;
 }
 
 .community-panel {
@@ -692,6 +714,147 @@ a:focus-visible {
   font-weight: bold;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.search-form {
+  max-width: 45rem;
+}
+
+.search-query {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 0.5em;
+}
+
+.search-query input,
+.search-query button,
+.search-advanced input,
+.search-advanced select {
+  min-height: 2rem;
+  border: 1px solid rgb(51 51 51 / 35%);
+  border-radius: 2px;
+  background: var(--background);
+  color: var(--text);
+  font: inherit;
+}
+
+.search-query input,
+.search-advanced input,
+.search-advanced select {
+  padding: 0.25em 0.4em;
+}
+
+.search-query button {
+  padding: 0.25em 0.8em;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.search-primary-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75em 1.5em;
+  margin-top: 1em;
+}
+
+.search-primary-controls fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.search-primary-controls legend {
+  margin-bottom: 0.25em;
+  font-weight: bold;
+}
+
+.search-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2em 0.8em;
+}
+
+.search-choices label {
+  white-space: nowrap;
+}
+
+.search-advanced {
+  margin-top: 1em;
+  padding: 0.5em 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.search-advanced summary {
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.search-advanced-grid {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) repeat(2, max-content);
+  align-items: end;
+  gap: 1em;
+  margin-top: 0.75em;
+}
+
+.search-advanced-grid > label {
+  display: grid;
+  gap: 0.2em;
+}
+
+.search-advanced-grid small {
+  color: var(--muted);
+}
+
+.search-community-prefix {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 0.25em;
+}
+
+.search-results,
+.search-help {
+  margin-top: 1.5em;
+}
+
+.search-results h1,
+.search-help h1 {
+  margin: 0 0 0.75em;
+  font-size: 1rem;
+}
+
+.search-term {
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgb(51 51 51 / 7%);
+  font-family: monospace;
+  font-weight: normal;
+}
+
+.search-summary {
+  max-width: 45rem;
+  margin: 0.15em 0;
+  color: rgb(51 51 51 / 75%);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.search-help ul {
+  padding-left: 1.5em;
+}
+
 @media only screen and (max-width: 760px) {
   .community-layout,
   .wiki-layout {
@@ -703,6 +866,10 @@ a:focus-visible {
     display: none;
   }
 
+  .search-primary-controls,
+  .search-advanced-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media screen and (min-width: 481px) {
@@ -715,20 +882,18 @@ a:focus-visible {
   }
 
   .header-inner {
-    padding: 5px 10px 5px 40px;
+    padding: 5px 10px 5px 0;
   }
 }
 
 @media only screen and (max-width: 480px) {
   .site-header {
-    height: 44px;
     border-bottom: 1px solid #ccc;
     background: #eee;
   }
 
   .header-inner {
-    height: 44px;
-    padding: 0.75rem 0.5rem 0;
+    padding: 0.5rem 0;
   }
 
   .page {
@@ -736,6 +901,10 @@ a:focus-visible {
   }
 
   .feed {
+    margin-left: -0.5rem;
+  }
+
+  .community-sorts {
     margin-left: -0.5rem;
   }
 

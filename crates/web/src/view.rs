@@ -7,7 +7,7 @@ use ammonia::{Builder, UrlRelative};
 use askama::Template;
 use askama_web::WebTemplate;
 
-use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, Subreddit, WikiPage, WikiPageListing};
+use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, PublicThing, Subreddit, WikiPage, WikiPageListing};
 use url::{form_urlencoded, Url};
 
 #[derive(Clone, Debug)]
@@ -41,6 +41,41 @@ pub struct FeedTemplate {
 	pub next_url: String,
 	pub has_next: bool,
 	pub feed_label: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct SearchChoice {
+	pub value: &'static str,
+	pub label: &'static str,
+	pub checked: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct SearchResultView {
+	pub metric: String,
+	pub metric_label: String,
+	pub title: String,
+	pub href: String,
+	pub domain: Option<String>,
+	pub summary: Option<String>,
+	pub metadata: Vec<String>,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "search.html")]
+pub struct SearchTemplate {
+	pub query: String,
+	pub community: String,
+	pub kinds: Vec<SearchChoice>,
+	pub sorts: Vec<SearchChoice>,
+	pub times: Vec<SearchChoice>,
+	pub limits: Vec<SearchChoice>,
+	pub results: Vec<SearchResultView>,
+	pub result_count: usize,
+	pub searched: bool,
+	pub advanced_open: bool,
+	pub next_url: String,
+	pub has_next: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -170,6 +205,73 @@ pub fn feed_item(post: &Post) -> FeedItem {
 		stickied: post.stickied,
 		badges,
 	}
+}
+
+pub fn search_result(item: &PublicThing) -> Option<SearchResultView> {
+	match item {
+		PublicThing::Post(thing) => {
+			let item = feed_item(&thing.data);
+			Some(SearchResultView {
+				metric: item.score,
+				metric_label: "points".into(),
+				title: item.title,
+				href: item.href,
+				domain: item.show_domain.then_some(item.domain),
+				summary: None,
+				metadata: vec![format!("by {}", item.author), item.age, format!("{} comments", item.comments)],
+			})
+		}
+		PublicThing::Subreddit(thing) => {
+			let subreddit = &thing.data;
+			Some(SearchResultView {
+				metric: compact(subreddit.subscribers),
+				metric_label: "members".into(),
+				title: subreddit.display_name_prefixed.clone(),
+				href: format!("/r/{}", subreddit.display_name),
+				domain: None,
+				summary: nonempty(subreddit.public_description.trim()),
+				metadata: subreddit.accounts_active.map(|active| format!("{} active", compact(active))).into_iter().collect(),
+			})
+		}
+		PublicThing::User(_) | PublicThing::Comment(_) => None,
+	}
+}
+
+pub fn search_choices(
+	active_kind: &str,
+	active_sort: &str,
+	active_time: &str,
+	active_limit: u8,
+) -> (Vec<SearchChoice>, Vec<SearchChoice>, Vec<SearchChoice>, Vec<SearchChoice>) {
+	let choices = |values: &[(&'static str, &'static str)], active: &str| {
+		values
+			.iter()
+			.map(|&(value, label)| SearchChoice {
+				value,
+				label,
+				checked: value == active,
+			})
+			.collect()
+	};
+	(
+		choices(&[("posts", "Posts"), ("communities", "Communities")], active_kind),
+		choices(
+			&[("relevance", "Relevance"), ("new", "New"), ("top", "Top"), ("hot", "Hot"), ("comments", "Comments")],
+			active_sort,
+		),
+		choices(
+			&[
+				("all", "Any time"),
+				("hour", "Past hour"),
+				("day", "Past day"),
+				("week", "Past week"),
+				("month", "Past month"),
+				("year", "Past year"),
+			],
+			active_time,
+		),
+		choices(&[("10", "10"), ("25", "25"), ("50", "50"), ("100", "100")], &active_limit.to_string()),
+	)
 }
 
 pub fn community_view(subreddit: &Subreddit) -> CommunityView {

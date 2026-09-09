@@ -5,15 +5,16 @@ use axum::{
 use neddit_api::{
 	client::Access,
 	models::PostComments,
-	service::{CommentQuery, CommentSort, ListingQuery, MoreChildrenQuery, PostSort, RedditService, WikiPageQuery},
+	service::{CommentQuery, CommentSort, ListingQuery, ListingTime, MoreChildrenQuery, PostSort, RedditService, SearchQuery, SearchResultType, SearchSort, WikiPageQuery},
 };
 use serde::Deserialize;
+use url::form_urlencoded;
 
 use crate::{
 	error::AppError,
 	view::{
-		comment_sort_links, comment_tree, community_view, feed_item, loaded_comment_tree, next_url, post_view, sort_links, subreddit_next_url, subreddit_sort_links, wiki_view,
-		FeedTemplate, MoreCommentsTemplate, PostTemplate, SubredditTemplate, WikiTemplate,
+		comment_sort_links, comment_tree, community_view, feed_item, loaded_comment_tree, next_url, post_view, search_choices, search_result, sort_links, subreddit_next_url,
+		subreddit_sort_links, wiki_view, FeedTemplate, MoreCommentsTemplate, PostTemplate, SearchTemplate, SubredditTemplate, WikiTemplate,
 	},
 };
 
@@ -46,6 +47,31 @@ pub struct WikiQuery {
 	v2: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SearchPageQuery {
+	q: Option<String>,
+	kind: Option<String>,
+	sort: Option<String>,
+	time: Option<String>,
+	community: Option<String>,
+	limit: Option<u8>,
+	after: Option<String>,
+	count: Option<u32>,
+}
+
+#[derive(Clone, Debug)]
+struct SearchState {
+	query: String,
+	kind: SearchResultType,
+	kind_name: &'static str,
+	sort: SearchSort,
+	sort_name: &'static str,
+	time: ListingTime,
+	time_name: &'static str,
+	community: String,
+	limit: u8,
+}
+
 pub async fn front_page(State(service): State<RedditService>, Query(query): Query<FeedQuery>) -> Result<FeedTemplate, AppError> {
 	let (sort, sort_name) = parse_sort(query.sort.as_deref())?;
 	let count = query.count.unwrap_or(0);
@@ -70,6 +96,67 @@ pub async fn front_page(State(service): State<RedditService>, Query(query): Quer
 		has_next: !next_url.is_empty(),
 		next_url,
 		feed_label: "Front page posts".into(),
+	})
+}
+
+pub async fn search_page(State(service): State<RedditService>, Query(query): Query<SearchPageQuery>) -> Result<SearchTemplate, AppError> {
+	let after = query.after.clone();
+	let count = query.count.unwrap_or(0);
+	let state = parse_search_state(&query)?;
+	let (kinds, sorts, times, limits) = search_choices(state.kind_name, state.sort_name, state.time_name, state.limit);
+	let advanced_open = !state.community.is_empty() || state.time != ListingTime::All || state.limit != PAGE_SIZE;
+	if state.query.is_empty() {
+		return Ok(SearchTemplate {
+			query: state.query,
+			community: state.community,
+			kinds,
+			sorts,
+			times,
+			limits,
+			results: Vec::new(),
+			result_count: 0,
+			searched: false,
+			advanced_open,
+			next_url: String::new(),
+			has_next: false,
+		});
+	}
+
+	let search_query = SearchQuery {
+		listing: ListingQuery {
+			after,
+			count: Some(count),
+			limit: Some(state.limit),
+			time: Some(state.time),
+			..ListingQuery::default()
+		},
+		query: state.query.clone(),
+		restrict_sr: (!state.community.is_empty() && state.kind == SearchResultType::Post).then_some(true),
+		sort: Some(state.sort),
+		result_types: vec![state.kind],
+		..SearchQuery::default()
+	};
+	let listing = if state.community.is_empty() || state.kind != SearchResultType::Post {
+		service.search(&search_query, Access::Standard).await?
+	} else {
+		service.search_subreddit(&state.community, &search_query, Access::Standard).await?
+	};
+	let results: Vec<_> = listing.data.children.iter().filter_map(search_result).collect();
+	let next_url = search_next_url(&state, listing.data.after.as_deref(), count.saturating_add(u32::from(state.limit)));
+
+	Ok(SearchTemplate {
+		query: state.query,
+		community: state.community,
+		kinds,
+		sorts,
+		times,
+		limits,
+		result_count: results.len(),
+		results,
+		searched: true,
+		advanced_open,
+		has_next: !next_url.is_empty(),
+		next_url,
 	})
 }
 
@@ -247,5 +334,64 @@ fn parse_comment_sort(value: Option<&str>) -> Result<(CommentSort, &'static str)
 		"controversial" => Ok((CommentSort::Controversial, "controversial")),
 		_ => Err(AppError::InvalidCommentSort),
 	}
+}
+
+fn parse_search_state(query: &SearchPageQuery) -> Result<SearchState, AppError> {
+	let (kind, kind_name) = match query.kind.as_deref().unwrap_or("posts") {
+		"posts" => (SearchResultType::Post, "posts"),
+		"communities" => (SearchResultType::Subreddit, "communities"),
+		_ => return Err(AppError::InvalidSearch),
+	};
+	let (sort, sort_name) = match query.sort.as_deref().unwrap_or("relevance") {
+		"relevance" => (SearchSort::Relevance, "relevance"),
+		"new" => (SearchSort::New, "new"),
+		"top" => (SearchSort::Top, "top"),
+		"hot" => (SearchSort::Hot, "hot"),
+		"comments" => (SearchSort::Comments, "comments"),
+		_ => return Err(AppError::InvalidSearch),
+	};
+	let (time, time_name) = match query.time.as_deref().unwrap_or("all") {
+		"all" => (ListingTime::All, "all"),
+		"hour" => (ListingTime::Hour, "hour"),
+		"day" => (ListingTime::Day, "day"),
+		"week" => (ListingTime::Week, "week"),
+		"month" => (ListingTime::Month, "month"),
+		"year" => (ListingTime::Year, "year"),
+		_ => return Err(AppError::InvalidSearch),
+	};
+	let limit = query.limit.unwrap_or(PAGE_SIZE);
+	if ![10, 25, 50, 100].contains(&limit) {
+		return Err(AppError::InvalidSearch);
+	}
+	let community = query.community.as_deref().unwrap_or_default().trim().trim_start_matches("r/").trim_matches('/').to_owned();
+	Ok(SearchState {
+		query: query.q.as_deref().unwrap_or_default().trim().to_owned(),
+		kind,
+		kind_name,
+		sort,
+		sort_name,
+		time,
+		time_name,
+		community,
+		limit,
+	})
+}
+
+fn search_next_url(state: &SearchState, after: Option<&str>, count: u32) -> String {
+	let Some(after) = after else {
+		return String::new();
+	};
+	let mut query = form_urlencoded::Serializer::new(String::new());
+	query.append_pair("q", &state.query);
+	query.append_pair("kind", state.kind_name);
+	query.append_pair("sort", state.sort_name);
+	query.append_pair("time", state.time_name);
+	query.append_pair("limit", &state.limit.to_string());
+	if !state.community.is_empty() {
+		query.append_pair("community", &state.community);
+	}
+	query.append_pair("after", after);
+	query.append_pair("count", &count.to_string());
+	format!("/search?{}", query.finish())
 }
 

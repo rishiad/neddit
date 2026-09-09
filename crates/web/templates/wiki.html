@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}{{ wiki.title }} · {{ community.display_name_prefixed }} · Neddit{% endblock %}
+
+{% block nav %}
+  <nav class="community-nav" aria-label="{{ community.display_name_prefixed }}">
+    <a href="{{ community.posts_url }}"><strong>{{ community.display_name_prefixed }}</strong></a>
+    <a class="active" href="{{ community.wiki_url }}" aria-current="page">Wiki</a>
+  </nav>
+{% endblock %}
+
+{% block content %}
+  <div class="wiki-layout">
+    <article class="wiki-article">
+      <header>
+        <div class="wiki-kicker">{{ community.display_name_prefixed }} wiki</div>
+        <h1>{{ wiki.title }}</h1>
+        {% if wiki.show_revision %}<p>Revised {{ wiki.revision_age }}</p>{% endif %}
+      </header>
+      <div class="wiki-content rich-text">{{ wiki.content_html|safe }}</div>
+    </article>
+
+    <aside class="wiki-sidebar">
+      <details class="community-panel" open>
+        <summary>Wiki pages</summary>
+        <nav class="wiki-index" aria-label="Wiki pages">
+          {% for link in wiki.links %}
+            <a{% if link.active %} class="active" aria-current="page"{% endif %} href="{{ link.href }}">{{ link.label }}</a>
+          {% endfor %}
+        </nav>
+      </details>
+    </aside>
+  </div>
+{% endblock %}

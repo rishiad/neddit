@@ -1,0 +1,11 @@
+<ol class="feed" aria-label="{{ feed_label }}">
+  {% for item in items %}
+    {% include "partials/feed_item.html" %}
+  {% endfor %}
+</ol>
+
+{% if has_next %}
+  <nav class="pagination" aria-label="Feed pagination">
+    <a href="{{ next_url }}">Next page <span aria-hidden="true">→</span></a>
+  </nav>
+{% endif %}

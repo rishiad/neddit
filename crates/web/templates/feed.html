@@ -9,15 +9,5 @@
 {% endblock %}
 
 {% block content %}
-  <ol class="feed" aria-label="Front page posts">
-    {% for item in items %}
-      {% include "partials/feed_item.html" %}
-    {% endfor %}
-  </ol>
-
-  {% if has_next %}
-    <nav class="pagination" aria-label="Feed pagination">
-      <a href="{{ next_url }}">Next page <span aria-hidden="true">→</span></a>
-    </nav>
-  {% endif %}
+  {% include "partials/feed_list.html" %}
 {% endblock %}

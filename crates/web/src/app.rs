@@ -1,14 +1,20 @@
-use axum::extract::{Path, Query, State};
+use axum::{
+	extract::{Path, Query, State},
+	response::Redirect,
+};
 use neddit_api::{
 	client::Access,
 	models::PostComments,
-	service::{CommentQuery, CommentSort, ListingQuery, MoreChildrenQuery, PostSort, RedditService},
+	service::{CommentQuery, CommentSort, ListingQuery, MoreChildrenQuery, PostSort, RedditService, WikiPageQuery},
 };
 use serde::Deserialize;
 
 use crate::{
 	error::AppError,
-	view::{comment_sort_links, comment_tree, feed_item, loaded_comment_tree, next_url, post_view, sort_links, FeedTemplate, MoreCommentsTemplate, PostTemplate},
+	view::{
+		comment_sort_links, comment_tree, community_view, feed_item, loaded_comment_tree, next_url, post_view, sort_links, subreddit_next_url, subreddit_sort_links, wiki_view,
+		FeedTemplate, MoreCommentsTemplate, PostTemplate, SubredditTemplate, WikiTemplate,
+	},
 };
 
 const PAGE_SIZE: u8 = 25;
@@ -34,6 +40,12 @@ pub struct MoreCommentsQuery {
 	sort: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct WikiQuery {
+	v: Option<String>,
+	v2: Option<String>,
+}
+
 pub async fn front_page(State(service): State<RedditService>, Query(query): Query<FeedQuery>) -> Result<FeedTemplate, AppError> {
 	let (sort, sort_name) = parse_sort(query.sort.as_deref())?;
 	let count = query.count.unwrap_or(0);
@@ -57,6 +69,55 @@ pub async fn front_page(State(service): State<RedditService>, Query(query): Quer
 		sorts: sort_links(sort_name),
 		has_next: !next_url.is_empty(),
 		next_url,
+		feed_label: "Front page posts".into(),
+	})
+}
+
+pub async fn subreddit_feed(State(service): State<RedditService>, Path(subreddit): Path<String>, Query(query): Query<FeedQuery>) -> Result<SubredditTemplate, AppError> {
+	let (sort, sort_name) = parse_subreddit_sort(query.sort.as_deref())?;
+	let count = query.count.unwrap_or(0);
+	let listing_query = ListingQuery {
+		after: query.after,
+		count: Some(count),
+		limit: Some(PAGE_SIZE),
+		..ListingQuery::default()
+	};
+	let (listing, community) = tokio::try_join!(
+		service.subreddit_posts(&subreddit, sort, &listing_query, Access::Standard),
+		service.subreddit_about(&subreddit, Access::Standard),
+	)?;
+	let items = listing.data.children.iter().map(|thing| feed_item(&thing.data)).collect();
+	let next_url = subreddit_next_url(&subreddit, sort_name, listing.data.after.as_deref(), count.saturating_add(u32::from(PAGE_SIZE)));
+
+	Ok(SubredditTemplate {
+		community: community_view(&community.data),
+		items,
+		sorts: subreddit_sort_links(sort_name, &subreddit),
+		has_next: !next_url.is_empty(),
+		next_url,
+		feed_label: format!("r/{subreddit} posts"),
+	})
+}
+
+pub async fn wiki_root(Path(subreddit): Path<String>) -> Redirect {
+	Redirect::permanent(&format!("/r/{subreddit}/wiki/index"))
+}
+
+pub async fn wiki_page(
+	State(service): State<RedditService>,
+	Path((subreddit, page)): Path<(String, String)>,
+	Query(query): Query<WikiQuery>,
+) -> Result<WikiTemplate, AppError> {
+	let query = WikiPageQuery { v: query.v, v2: query.v2 };
+	let (community, wiki, pages) = tokio::try_join!(
+		service.subreddit_about(&subreddit, Access::Standard),
+		service.wiki_page(&subreddit, &page, &query, Access::Standard),
+		service.wiki_pages(&subreddit, Access::Standard),
+	)?;
+
+	Ok(WikiTemplate {
+		community: community_view(&community.data),
+		wiki: wiki_view(&subreddit, &page, &wiki, &pages),
 	})
 }
 
@@ -162,6 +223,17 @@ fn parse_sort(value: Option<&str>) -> Result<(PostSort, &'static str), AppError>
 		"new" => Ok((PostSort::New, "new")),
 		"rising" => Ok((PostSort::Rising, "rising")),
 		"top" => Ok((PostSort::Top, "top")),
+		_ => Err(AppError::InvalidSort),
+	}
+}
+
+fn parse_subreddit_sort(value: Option<&str>) -> Result<(PostSort, &'static str), AppError> {
+	match value.unwrap_or("hot") {
+		"hot" => Ok((PostSort::Hot, "hot")),
+		"new" => Ok((PostSort::New, "new")),
+		"rising" => Ok((PostSort::Rising, "rising")),
+		"top" => Ok((PostSort::Top, "top")),
+		"controversial" => Ok((PostSort::Controversial, "controversial")),
 		_ => Err(AppError::InvalidSort),
 	}
 }

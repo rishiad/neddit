@@ -1,10 +1,13 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+	collections::HashSet,
+	time::{SystemTime, UNIX_EPOCH},
+};
 
+use ammonia::{Builder, UrlRelative};
 use askama::Template;
 use askama_web::WebTemplate;
-use std::collections::HashSet;
 
-use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post};
+use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, Subreddit, WikiPage, WikiPageListing};
 use url::{form_urlencoded, Url};
 
 #[derive(Clone, Debug)]
@@ -37,6 +40,56 @@ pub struct FeedTemplate {
 	pub sorts: Vec<SortLink>,
 	pub next_url: String,
 	pub has_next: bool,
+	pub feed_label: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CommunityView {
+	pub display_name_prefixed: String,
+	pub title: String,
+	pub public_description: Option<String>,
+	pub description: Option<String>,
+	pub description_html: Option<String>,
+	pub members: String,
+	pub active: String,
+	pub posts_url: String,
+	pub wiki_url: String,
+	pub has_wiki: bool,
+	pub over_18: bool,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "subreddit.html")]
+pub struct SubredditTemplate {
+	pub community: CommunityView,
+	pub items: Vec<FeedItem>,
+	pub sorts: Vec<SortLink>,
+	pub next_url: String,
+	pub has_next: bool,
+	pub feed_label: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct WikiLink {
+	pub label: String,
+	pub href: String,
+	pub active: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct WikiView {
+	pub title: String,
+	pub content_html: String,
+	pub revision_age: String,
+	pub show_revision: bool,
+	pub links: Vec<WikiLink>,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "wiki.html")]
+pub struct WikiTemplate {
+	pub community: CommunityView,
+	pub wiki: WikiView,
 }
 
 #[derive(Clone, Debug)]
@@ -119,6 +172,61 @@ pub fn feed_item(post: &Post) -> FeedItem {
 	}
 }
 
+pub fn community_view(subreddit: &Subreddit) -> CommunityView {
+	let title = if subreddit.title.trim().is_empty() {
+		subreddit.display_name_prefixed.clone()
+	} else {
+		subreddit.title.trim().to_owned()
+	};
+	let public_description = nonempty(subreddit.public_description.trim());
+	let description = nonempty(subreddit.description.trim());
+	let description_html = subreddit.description_html.as_deref().map(sanitize_html).and_then(|html| nonempty(&html));
+	let posts_url = format!("/r/{}", subreddit.display_name);
+	CommunityView {
+		display_name_prefixed: subreddit.display_name_prefixed.clone(),
+		title,
+		public_description,
+		description,
+		description_html,
+		members: compact(subreddit.subscribers),
+		active: subreddit.accounts_active.map_or_else(|| "—".into(), compact),
+		wiki_url: format!("{posts_url}/wiki/index"),
+		posts_url,
+		has_wiki: subreddit.wiki_enabled.unwrap_or(false),
+		over_18: subreddit.over18,
+	}
+}
+
+pub fn wiki_view(subreddit: &str, page: &str, wiki: &WikiPage, pages: &WikiPageListing) -> WikiView {
+	let title = if page == "index" { "Wiki".into() } else { page.replace(['_', '-'], " ") };
+	let mut links: Vec<_> = pages
+		.data
+		.iter()
+		.filter(|label| !label.starts_with("config/"))
+		.map(|label| WikiLink {
+			label: if label == "index" { "Home".into() } else { label.replace('_', " ") },
+			href: wiki_path(subreddit, label),
+			active: label == page,
+		})
+		.collect();
+	links.sort_by_key(|link| (link.label != "Home", link.label.clone()));
+	WikiView {
+		title,
+		content_html: sanitize_html(&wiki.data.content_html),
+		revision_age: wiki.data.revision_date.map_or_else(String::new, age),
+		show_revision: wiki.data.revision_date.is_some(),
+		links,
+	}
+}
+
+fn sanitize_html(value: &str) -> String {
+	Builder::new().url_relative(UrlRelative::PassThrough).clean(value).to_string()
+}
+
+fn nonempty(value: &str) -> Option<String> {
+	(!value.is_empty()).then(|| value.to_owned())
+}
+
 pub fn post_view(post: &Post) -> PostView {
 	let item = feed_item(post);
 	let selftext = post.selftext.trim().to_owned();
@@ -171,6 +279,18 @@ pub fn sort_links(active: &str) -> Vec<SortLink> {
 		.collect()
 }
 
+pub fn subreddit_sort_links(active: &str, subreddit: &str) -> Vec<SortLink> {
+	let base = format!("/r/{subreddit}");
+	[("hot", "Hot"), ("new", "New"), ("rising", "Rising"), ("top", "Top"), ("controversial", "Controversial")]
+		.into_iter()
+		.map(|(value, label)| SortLink {
+			label,
+			href: if value == "hot" { base.clone() } else { format!("{base}?sort={value}") },
+			active: value == active,
+		})
+		.collect()
+}
+
 pub fn comment_sort_links(active: &str, permalink: &str) -> Vec<SortLink> {
 	[("best", "Best"), ("top", "Top"), ("new", "New"), ("old", "Old"), ("controversial", "Controversial")]
 		.into_iter()
@@ -183,6 +303,14 @@ pub fn comment_sort_links(active: &str, permalink: &str) -> Vec<SortLink> {
 }
 
 pub fn next_url(sort: &str, after: Option<&str>, count: u32) -> String {
+	listing_next_url("/", sort, after, count)
+}
+
+pub fn subreddit_next_url(subreddit: &str, sort: &str, after: Option<&str>, count: u32) -> String {
+	listing_next_url(&format!("/r/{subreddit}"), sort, after, count)
+}
+
+fn listing_next_url(base: &str, sort: &str, after: Option<&str>, count: u32) -> String {
 	let Some(after) = after else {
 		return String::new();
 	};
@@ -192,7 +320,17 @@ pub fn next_url(sort: &str, after: Option<&str>, count: u32) -> String {
 	}
 	query.append_pair("after", after);
 	query.append_pair("count", &count.to_string());
-	format!("/?{}", query.finish())
+	format!("{base}?{}", query.finish())
+}
+
+fn wiki_path(subreddit: &str, page: &str) -> String {
+	let mut url = Url::parse("http://neddit.local").expect("static base URL is valid");
+	{
+		let mut segments = url.path_segments_mut().expect("HTTP URLs support path segments");
+		segments.extend(["r", subreddit, "wiki"]);
+		segments.extend(page.split('/'));
+	}
+	url.path().to_owned()
 }
 
 fn safe_outbound(value: &str) -> Option<String> {

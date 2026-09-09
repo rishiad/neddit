@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}{{ community.display_name_prefixed }} · Neddit{% endblock %}
+
+{% block nav %}
+  <nav class="community-nav" aria-label="{{ community.display_name_prefixed }}">
+    <a href="{{ community.posts_url }}" aria-current="page"><strong>{{ community.display_name_prefixed }}</strong></a>
+    {% if community.has_wiki %}<a href="{{ community.wiki_url }}">Wiki</a>{% endif %}
+  </nav>
+{% endblock %}
+
+{% block content %}
+  <header class="community-heading">
+    <h1>{{ community.title }}</h1>
+    {% match community.public_description %}
+      {% when Some with (description) %}<p>{{ description }}</p>
+      {% when None %}
+    {% endmatch %}
+  </header>
+
+  <div class="community-layout">
+    <section class="community-feed" aria-label="{{ community.display_name_prefixed }} posts">
+      <nav class="community-sorts" aria-label="Post sorting">
+        {% for sort in sorts %}
+          <a class="sort-link{% if sort.active %} active{% endif %}" href="{{ sort.href }}"{% if sort.active %} aria-current="page"{% endif %}>{{ sort.label }}</a>
+        {% endfor %}
+      </nav>
+      {% include "partials/feed_list.html" %}
+    </section>
+
+    <aside class="community-sidebar">
+      <details class="community-panel" open>
+        <summary>About {{ community.display_name_prefixed }}</summary>
+        <dl class="community-stats">
+          <div><dt>Members</dt><dd>{{ community.members }}</dd></div>
+          <div><dt>Active</dt><dd>{{ community.active }}</dd></div>
+        </dl>
+        {% match community.description_html %}
+          {% when Some with (description) %}
+            <div class="community-description rich-text">{{ description|safe }}</div>
+          {% when None %}
+            {% match community.description %}
+              {% when Some with (description) %}<div class="community-description">{{ description }}</div>
+              {% when None %}
+            {% endmatch %}
+        {% endmatch %}
+        {% if community.over_18 %}<p class="community-notice">NSFW community</p>{% endif %}
+      </details>
+    </aside>
+  </div>
+{% endblock %}

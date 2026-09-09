@@ -18,13 +18,23 @@ use tower_livereload::LiveReloadLayer;
 
 #[cfg(debug_assertions)]
 const CONTENT_SECURITY_POLICY: &str =
-	"default-src 'none'; style-src 'self'; script-src 'unsafe-inline'; connect-src 'self' ws: wss:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+	"default-src 'none'; style-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' ws: wss:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 #[cfg(not(debug_assertions))]
-const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+const CONTENT_SECURITY_POLICY: &str =
+	"default-src 'none'; style-src 'self'; script-src https://cdn.jsdelivr.net; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 pub fn router(service: RedditService) -> Router {
 	let app = Router::new()
 		.route("/", get(app::front_page))
+		.route("/more-comments", get(app::more_comments))
+		.route("/comments/{article}", get(app::post_comments))
+		.route("/comments/{article}/{slug}", get(app::post_permalink))
+		.route("/comments/{article}/{slug}/", get(app::post_permalink))
+		.route("/comments/{article}/{slug}/{comment}", get(app::post_comment_permalink))
+		.route("/r/{subreddit}/comments/{article}", get(app::subreddit_post_comments))
+		.route("/r/{subreddit}/comments/{article}/{slug}", get(app::subreddit_post_permalink))
+		.route("/r/{subreddit}/comments/{article}/{slug}/", get(app::subreddit_post_permalink))
+		.route("/r/{subreddit}/comments/{article}/{slug}/{comment}", get(app::subreddit_post_comment_permalink))
 		.with_state(service)
 		.merge(system_routes());
 	#[cfg(debug_assertions)]

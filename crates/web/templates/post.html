@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}{{ post.item.title }} · Neddit{% endblock %}
+
+{% block nav %}
+  <nav class="post-nav" aria-label="Post context">
+    <span>r/{{ post.item.subreddit }}</span>
+  </nav>
+{% endblock %}
+
+{% block content %}
+  <article class="post-entry">
+    <div class="post-detail">
+      <div class="post-score" aria-label="{{ post.item.score }} points">
+        <strong>{{ post.item.score }}</strong>
+      </div>
+      <div class="post-title">
+        <h1>
+          <a href="{{ post.item.href }}">{{ post.item.title }}</a>
+          {% for badge in post.item.badges %}<span class="badge">{{ badge }}</span>{% endfor %}
+        </h1>
+      </div>
+      {% if post.item.show_domain %}<span class="post-domain">({{ post.item.domain }})</span>{% endif %}
+      <div class="metadata post-metadata">
+        <span>by {{ post.item.author }}</span>
+        <span>{{ post.item.age }}</span>
+      </div>
+    </div>
+
+    <div class="post-content">
+      {% if post.show_selftext %}
+        <div class="post-copy">{{ post.selftext }}</div>
+      {% endif %}
+    </div>
+  </article>
+
+  <section class="comments" aria-labelledby="comments-heading">
+    <header class="comments-header">
+      <h2 id="comments-heading">{{ comments_heading }}</h2>
+      <nav class="comment-sorts" aria-label="Comment sorting">
+        {% for sort in sorts %}
+          <a class="comment-sort{% if sort.active %} active{% endif %}" href="{{ sort.href }}"{% if sort.active %} aria-current="page"{% endif %}>{{ sort.label }}</a>
+        {% endfor %}
+      </nav>
+    </header>
+
+    {% if has_comments %}
+      <ol class="comment-tree comments-root">
+        {% include "partials/comment_nodes.html" %}
+      </ol>
+    {% else %}
+      <p class="comments-empty">No comments yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% for event in comment_tree %}
+  {% match event %}
+    {% when CommentTreeEvent::Open with (comment) %}
+      <li class="comments-subtree">
+        {% if comment.more %}
+          <div class="more-comments">
+            {% if comment.more_url.is_empty() %}
+              <span>{{ comment.body }}</span>
+            {% else %}
+              <button class="more-comments-button"
+                      type="button"
+                      hx-get="{{ comment.more_url }}"
+                      hx-target="closest .comments-subtree"
+                      hx-swap="outerHTML"
+                      hx-disabled-elt="this">{{ comment.body }}</button>
+            {% endif %}
+          </div>
+        {% else %}
+          <input class="comment-folder-button" id="comment-folder-{{ comment.id }}" type="checkbox">
+          <article class="comment" id="comment-{{ comment.id }}">
+            <div class="comment-voters" aria-label="{{ comment.score }} points">
+              <label class="comment-folder" for="comment-folder-{{ comment.id }}" aria-label="Collapse comment by {{ comment.author }}"></label>
+              <span class="comment-score">{{ comment.score }}</span>
+            </div>
+            <div class="comment-details">
+              <header class="comment-meta">
+                <strong>{{ comment.author }}</strong>
+                <a href="{{ comment.permalink }}">{{ comment.age }}</a>
+              </header>
+              <div class="comment-body" role="heading" aria-level="3">{{ comment.body }}</div>
+            </div>
+          </article>
+        {% endif %}
+    {% when CommentTreeEvent::OpenReplies %}
+        <ol class="comment-tree">
+    {% when CommentTreeEvent::CloseReplies %}
+        </ol>
+    {% when CommentTreeEvent::Close %}
+      </li>
+  {% endmatch %}
+{% endfor %}

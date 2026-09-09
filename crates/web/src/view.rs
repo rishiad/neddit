@@ -2,7 +2,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use askama::Template;
 use askama_web::WebTemplate;
-use neddit_api::models::Post;
+use std::collections::HashSet;
+
+use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post};
 use url::{form_urlencoded, Url};
 
 #[derive(Clone, Debug)]
@@ -35,6 +37,49 @@ pub struct FeedTemplate {
 	pub sorts: Vec<SortLink>,
 	pub next_url: String,
 	pub has_next: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct PostView {
+	pub item: FeedItem,
+	pub selftext: String,
+	pub show_selftext: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct CommentView {
+	pub id: String,
+	pub author: String,
+	pub body: String,
+	pub score: String,
+	pub age: String,
+	pub permalink: String,
+	pub more_url: String,
+	pub more: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum CommentTreeEvent {
+	Open(CommentView),
+	OpenReplies,
+	CloseReplies,
+	Close,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "post.html")]
+pub struct PostTemplate {
+	pub post: PostView,
+	pub comment_tree: Vec<CommentTreeEvent>,
+	pub sorts: Vec<SortLink>,
+	pub comments_heading: String,
+	pub has_comments: bool,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "more_comments.html")]
+pub struct MoreCommentsTemplate {
+	pub comment_tree: Vec<CommentTreeEvent>,
 }
 
 pub fn feed_item(post: &Post) -> FeedItem {
@@ -74,12 +119,64 @@ pub fn feed_item(post: &Post) -> FeedItem {
 	}
 }
 
+pub fn post_view(post: &Post) -> PostView {
+	let item = feed_item(post);
+	let selftext = post.selftext.trim().to_owned();
+	PostView {
+		show_selftext: post.is_self && !selftext.is_empty(),
+		item,
+		selftext,
+	}
+}
+
+pub fn comment_tree(children: &[CommentChild], link_id: &str, sort: &str) -> Vec<CommentTreeEvent> {
+	let mut tree = Vec::new();
+	append_comments(children, link_id, sort, &mut tree);
+	tree
+}
+
+pub fn loaded_comment_tree(children: &[CommentChild], parent_id: &str, link_id: &str, sort: &str, remaining: &[String]) -> Vec<CommentTreeEvent> {
+	let mut tree = Vec::new();
+	let mut visited = HashSet::new();
+	append_flat_comments(children, parent_id, link_id, sort, &mut visited, &mut tree);
+	for child in children {
+		if !visited.contains(child_name(child)) {
+			append_flat_comment(child, children, link_id, sort, &mut visited, &mut tree);
+		}
+	}
+	if !remaining.is_empty() {
+		tree.push(CommentTreeEvent::Open(CommentView {
+			id: String::new(),
+			author: String::new(),
+			body: format!("{} more replies", compact(remaining.len() as u64)),
+			score: String::new(),
+			age: String::new(),
+			permalink: String::new(),
+			more_url: more_comments_url(remaining, link_id, parent_id, sort),
+			more: true,
+		}));
+		tree.push(CommentTreeEvent::Close);
+	}
+	tree
+}
+
 pub fn sort_links(active: &str) -> Vec<SortLink> {
 	[("hot", "Hot"), ("new", "New"), ("rising", "Rising"), ("top", "Top")]
 		.into_iter()
 		.map(|(value, label)| SortLink {
 			label,
 			href: if value == "hot" { "/".into() } else { format!("/?sort={value}") },
+			active: value == active,
+		})
+		.collect()
+}
+
+pub fn comment_sort_links(active: &str, permalink: &str) -> Vec<SortLink> {
+	[("best", "Best"), ("top", "Top"), ("new", "New"), ("old", "Old"), ("controversial", "Controversial")]
+		.into_iter()
+		.map(|(value, label)| SortLink {
+			label,
+			href: if value == "best" { permalink.into() } else { format!("{permalink}?sort={value}") },
 			active: value == active,
 		})
 		.collect()
@@ -114,6 +211,130 @@ fn display_author(author: &str) -> String {
 		"[deleted]".into()
 	} else {
 		author.into()
+	}
+}
+
+fn append_comments(children: &[CommentChild], link_id: &str, sort: &str, tree: &mut Vec<CommentTreeEvent>) {
+	for child in children {
+		match child {
+			CommentChild::Comment(comment) => {
+				let data = &comment.data;
+				tree.push(CommentTreeEvent::Open(comment_view(data)));
+				if let CommentReplies::Listing(replies) = &data.replies {
+					if !replies.data.children.is_empty() {
+						tree.push(CommentTreeEvent::OpenReplies);
+						append_comments(&replies.data.children, link_id, sort, tree);
+						tree.push(CommentTreeEvent::CloseReplies);
+					}
+				}
+				tree.push(CommentTreeEvent::Close);
+			}
+			CommentChild::More(more) => {
+				tree.push(CommentTreeEvent::Open(more_view(&more.data, link_id, sort)));
+				tree.push(CommentTreeEvent::Close);
+			}
+		}
+	}
+}
+
+fn comment_view(comment: &Comment) -> CommentView {
+	CommentView {
+		id: comment.id.clone(),
+		author: display_author(&comment.author),
+		body: comment.body.clone(),
+		score: signed_compact(comment.score),
+		age: age(comment.created_utc),
+		permalink: format!("#comment-{}", comment.id),
+		more_url: String::new(),
+		more: false,
+	}
+}
+
+fn more_view(more: &More, link_id: &str, sort: &str) -> CommentView {
+	CommentView {
+		id: more.id.clone(),
+		author: String::new(),
+		body: if more.count == 0 {
+			"Continue this thread".into()
+		} else {
+			format!("{} more replies", compact(more.count))
+		},
+		score: String::new(),
+		age: String::new(),
+		permalink: String::new(),
+		more_url: more_comments_url(&more.children, link_id, &more.parent_id, sort),
+		more: true,
+	}
+}
+
+fn more_comments_url(children: &[String], link_id: &str, parent_id: &str, sort: &str) -> String {
+	if children.is_empty() {
+		return String::new();
+	}
+	let mut query = form_urlencoded::Serializer::new(String::new());
+	query.append_pair("children", &children.join(","));
+	query.append_pair("link_id", link_id);
+	query.append_pair("parent_id", parent_id);
+	if sort != "best" {
+		query.append_pair("sort", sort);
+	}
+	format!("/more-comments?{}", query.finish())
+}
+
+fn append_flat_comments(children: &[CommentChild], parent_id: &str, link_id: &str, sort: &str, visited: &mut HashSet<String>, tree: &mut Vec<CommentTreeEvent>) {
+	for child in children {
+		if child_parent_id(child) == parent_id && !visited.contains(child_name(child)) {
+			append_flat_comment(child, children, link_id, sort, visited, tree);
+		}
+	}
+}
+
+fn append_flat_comment(child: &CommentChild, children: &[CommentChild], link_id: &str, sort: &str, visited: &mut HashSet<String>, tree: &mut Vec<CommentTreeEvent>) {
+	if !visited.insert(child_name(child).to_owned()) {
+		return;
+	}
+
+	match child {
+		CommentChild::Comment(comment) => {
+			tree.push(CommentTreeEvent::Open(comment_view(&comment.data)));
+			let mut replies = Vec::new();
+			if let CommentReplies::Listing(listing) = &comment.data.replies {
+				append_comments(&listing.data.children, link_id, sort, &mut replies);
+			}
+			append_flat_comments(children, &comment.data.name, link_id, sort, visited, &mut replies);
+			if !replies.is_empty() {
+				tree.push(CommentTreeEvent::OpenReplies);
+				tree.extend(replies);
+				tree.push(CommentTreeEvent::CloseReplies);
+			}
+			tree.push(CommentTreeEvent::Close);
+		}
+		CommentChild::More(more) => {
+			tree.push(CommentTreeEvent::Open(more_view(&more.data, link_id, sort)));
+			tree.push(CommentTreeEvent::Close);
+		}
+	}
+}
+
+fn child_name(child: &CommentChild) -> &str {
+	match child {
+		CommentChild::Comment(comment) => &comment.data.name,
+		CommentChild::More(more) => &more.data.name,
+	}
+}
+
+fn child_parent_id(child: &CommentChild) -> &str {
+	match child {
+		CommentChild::Comment(comment) => &comment.data.parent_id,
+		CommentChild::More(more) => &more.data.parent_id,
+	}
+}
+
+fn signed_compact(value: i64) -> String {
+	if value < 0 {
+		format!("−{}", compact(value.unsigned_abs()))
+	} else {
+		compact(value.unsigned_abs())
 	}
 }
 

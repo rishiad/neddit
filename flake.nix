@@ -1,5 +1,5 @@
 {
-  description = "Neddit: Private Reddit-compatible read API proxy";
+  description = "Neddit: Private Reddit-compatible read service";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -51,27 +51,20 @@
           CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
         };
 
-        nedditApi = package {
-          binaryName = "neddit-api";
-          cargoExtraArgs = "-p neddit-api";
-          runtimeInputs = [ pkgs.yt-dlp pkgs.deno ];
-        };
-        nedditWeb = package {
-          binaryName = "neddit-web";
-          cargoExtraArgs = "-p neddit-web";
+        neddit = package {
+          binaryName = "neddit";
+          cargoExtraArgs = "-p neddit";
           runtimeInputs = [ pkgs.yt-dlp pkgs.deno ];
         };
       in
       {
         checks = {
-          neddit-api = nedditApi;
-          neddit-web = nedditWeb;
+          inherit neddit;
         };
 
         packages = {
-          default = nedditApi;
-          neddit-api = nedditApi;
-          neddit-web = nedditWeb;
+          default = neddit;
+          inherit neddit;
         };
       }) // {
         nixosModules.default = import ./nix/module.nix { inherit self; };

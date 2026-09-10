@@ -3,18 +3,11 @@ name = "neddit-api"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-default-run = "neddit-api"
-
 [dependencies]
 caseless = "=0.2.2"
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 unicode-normalization = "=0.1.25"
 axum = "0.8.4"
-clap = { version = "4.4.11", default-features = false, features = [
-    "std",
-    "env",
-    "derive",
-] }
 regex = "1.10.2"
 scraper = "0.25.0"
 serde = { version = "1.0.193", features = ["derive"] }
@@ -32,7 +25,6 @@ uuid = { version = "1.6.1", features = ["v4"] }
 base64 = "0.22.1"
 fastrand = "2.0.1"
 log = "0.4.20"
-pretty_env_logger = "0.5.0"
 async-recursion = "1.1.1"
 tegen = "0.1.4"
 fake_user_agent = "0.2.2"

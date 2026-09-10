@@ -53,7 +53,7 @@ in
         after = [ "network-online.target" ];
         serviceConfig = {
           Type = "exec";
-          ExecStart = "${cfg.package}/bin/neddit-api --address ${lib.escapeShellArg cfg.address} --port ${toString cfg.port}${lib.optionalString (cfg.mediaKeyFile != null) " --media-key-file %d/media-key"}";
+          ExecStart = "${cfg.package}/bin/neddit --address ${lib.escapeShellArg cfg.address} --port ${toString cfg.port}${lib.optionalString (cfg.mediaKeyFile != null) " --media-key-file %d/media-key"}";
           Restart = "on-failure";
           RestartSec = 5;
 

@@ -1,0 +1,28 @@
+[package]
+name = "neddit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum = "0.8.9"
+clap = { version = "4.4.11", default-features = false, features = [
+	"std",
+	"env",
+	"derive",
+	"error-context",
+	"help",
+	"usage",
+] }
+neddit-api = { path = "../api" }
+neddit-web = { path = "../web" }
+tokio = { version = "1.49", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

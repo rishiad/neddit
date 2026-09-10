@@ -2,8 +2,9 @@
 set -eu
 
 exec cargo watch \
+  --watch crates/neddit \
   --watch crates/web \
   --watch crates/api \
   --watch Cargo.toml \
   --watch Cargo.lock \
-  --exec 'run -p neddit-web --locked'
+  --exec 'run -p neddit --locked'

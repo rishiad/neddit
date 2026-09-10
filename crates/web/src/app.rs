@@ -5,15 +5,15 @@ use axum::{
 use neddit_api::{
 	client::Access,
 	models::PostComments,
-	service::{CommentQuery, CommentSort, ListingQuery, MoreChildrenQuery, PostSort, RedditService, WikiPageQuery},
+	service::{CommentQuery, CommentSort, ListingQuery, ListingTime, MoreChildrenQuery, PostSort, RedditService, WikiPageQuery},
 };
 use serde::Deserialize;
 
 use crate::{
 	error::AppError,
 	view::{
-		comment_sort_links, comment_tree, community_view, feed_item, loaded_comment_tree, next_url, post_view, sort_links, subreddit_next_url, subreddit_sort_links, wiki_view,
-		FeedTemplate, MoreCommentsTemplate, PostTemplate, SubredditTemplate, WikiTemplate,
+		comment_sort_controls, comment_tree, community_view, feed_controls, feed_item, loaded_comment_tree, next_url, post_view, subreddit_next_url, wiki_view, FeedTemplate,
+		MoreCommentsTemplate, PostTemplate, SubredditTemplate, WikiTemplate,
 	},
 };
 
@@ -23,6 +23,7 @@ const MORE_COMMENTS_BATCH_SIZE: usize = 100;
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct FeedQuery {
 	sort: Option<String>,
+	t: Option<String>,
 	after: Option<String>,
 	count: Option<u32>,
 }
@@ -48,6 +49,7 @@ pub struct WikiQuery {
 
 pub async fn front_page(State(service): State<RedditService>, Query(query): Query<FeedQuery>) -> Result<FeedTemplate, AppError> {
 	let (sort, sort_name) = parse_sort(query.sort.as_deref())?;
+	let (time, time_name) = parse_feed_time(sort, query.t.as_deref())?;
 	let count = query.count.unwrap_or(0);
 	let listing = service
 		.front_page_posts(
@@ -56,17 +58,18 @@ pub async fn front_page(State(service): State<RedditService>, Query(query): Quer
 				after: query.after,
 				count: Some(count),
 				limit: Some(PAGE_SIZE),
+				time,
 				..ListingQuery::default()
 			},
 			Access::Standard,
 		)
 		.await?;
 	let items = listing.data.children.iter().map(|thing| feed_item(&thing.data)).collect();
-	let next_url = next_url(sort_name, listing.data.after.as_deref(), count.saturating_add(u32::from(PAGE_SIZE)));
+	let next_url = next_url(sort_name, time_name, listing.data.after.as_deref(), count.saturating_add(u32::from(PAGE_SIZE)));
 
 	Ok(FeedTemplate {
 		items,
-		sorts: sort_links(sort_name),
+		controls: feed_controls("/", sort_name, time_name, false),
 		has_next: !next_url.is_empty(),
 		next_url,
 		feed_label: "Front page posts".into(),
@@ -75,11 +78,13 @@ pub async fn front_page(State(service): State<RedditService>, Query(query): Quer
 
 pub async fn subreddit_feed(State(service): State<RedditService>, Path(subreddit): Path<String>, Query(query): Query<FeedQuery>) -> Result<SubredditTemplate, AppError> {
 	let (sort, sort_name) = parse_subreddit_sort(query.sort.as_deref())?;
+	let (time, time_name) = parse_feed_time(sort, query.t.as_deref())?;
 	let count = query.count.unwrap_or(0);
 	let listing_query = ListingQuery {
 		after: query.after,
 		count: Some(count),
 		limit: Some(PAGE_SIZE),
+		time,
 		..ListingQuery::default()
 	};
 	let (listing, community) = tokio::try_join!(
@@ -87,12 +92,12 @@ pub async fn subreddit_feed(State(service): State<RedditService>, Path(subreddit
 		service.subreddit_about(&subreddit, Access::Standard),
 	)?;
 	let items = listing.data.children.iter().map(|thing| feed_item(&thing.data)).collect();
-	let next_url = subreddit_next_url(&subreddit, sort_name, listing.data.after.as_deref(), count.saturating_add(u32::from(PAGE_SIZE)));
+	let next_url = subreddit_next_url(&subreddit, sort_name, time_name, listing.data.after.as_deref(), count.saturating_add(u32::from(PAGE_SIZE)));
 
 	Ok(SubredditTemplate {
 		community: community_view(&community.data),
 		items,
-		sorts: subreddit_sort_links(sort_name, &subreddit),
+		controls: feed_controls(&format!("/r/{subreddit}"), sort_name, time_name, true),
 		has_next: !next_url.is_empty(),
 		next_url,
 		feed_label: format!("r/{subreddit} posts"),
@@ -209,7 +214,7 @@ async fn post_page(service: RedditService, subreddit: Option<String>, article: S
 	let comment_tree = comment_tree(&comments.data.children, &link_id, sort_name);
 
 	Ok(PostTemplate {
-		sorts: comment_sort_links(sort_name, &post.item.permalink),
+		controls: comment_sort_controls(sort_name, &post.item.permalink),
 		comments_heading: format!("{} comment{}", post.item.comments, if comment_count == 1 { "" } else { "s" }),
 		has_comments: !comment_tree.is_empty(),
 		post,
@@ -235,6 +240,22 @@ fn parse_subreddit_sort(value: Option<&str>) -> Result<(PostSort, &'static str),
 		"top" => Ok((PostSort::Top, "top")),
 		"controversial" => Ok((PostSort::Controversial, "controversial")),
 		_ => Err(AppError::InvalidSort),
+	}
+}
+
+fn parse_feed_time(sort: PostSort, value: Option<&str>) -> Result<(Option<ListingTime>, &'static str), AppError> {
+	if sort != PostSort::Top {
+		return if value.is_none() { Ok((None, "day")) } else { Err(AppError::InvalidFeedTime) };
+	}
+
+	match value.unwrap_or("day") {
+		"hour" => Ok((Some(ListingTime::Hour), "hour")),
+		"day" => Ok((Some(ListingTime::Day), "day")),
+		"week" => Ok((Some(ListingTime::Week), "week")),
+		"month" => Ok((Some(ListingTime::Month), "month")),
+		"year" => Ok((Some(ListingTime::Year), "year")),
+		"all" => Ok((Some(ListingTime::All), "all")),
+		_ => Err(AppError::InvalidFeedTime),
 	}
 }
 

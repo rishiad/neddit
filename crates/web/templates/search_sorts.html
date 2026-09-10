@@ -1,8 +1,20 @@
 <fieldset id="search-sort-controls">
-  <legend>Order by:</legend>
-  <div class="search-choices">
+  <legend id="search-sort-label">Order by:</legend>
+  <div class="search-order-values">
+  <select name="sort" aria-labelledby="search-sort-label"
+          hx-get="/search/controls" hx-trigger="change" hx-target="#search-sort-controls" hx-swap="outerHTML"
+          hx-include="[name='kind'], [name='sort'], [name='t']" hx-sync="closest form:replace" hx-disabled-elt=".search-query button">
     {% for choice in sorts %}
-      <label><input type="radio" name="sort" value="{{ choice.value }}"{% if choice.checked %} checked{% endif %}> {{ choice.label }}</label>
+      <option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>
     {% endfor %}
+  </select>
+  {% if !times.is_empty() %}
+    <label class="visually-hidden" for="search-top-time">Top when</label>
+    <select id="search-top-time" name="t">
+      {% for choice in times %}
+        <option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>
+      {% endfor %}
+    </select>
+  {% endif %}
   </div>
 </fieldset>

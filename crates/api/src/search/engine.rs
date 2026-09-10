@@ -1,4 +1,5 @@
 use super::*;
+use crate::service::ListingTime;
 use crate::{
 	client::Access,
 	models::PublicThing,
@@ -14,7 +15,12 @@ pub struct Request {
 	pub q: String,
 	pub kind: Mode,
 	pub sort: Option<String>,
+	/// Reddit Top window: hour, day, week, month, year, or all. Defaults to all.
+	#[param(inline)]
+	pub t: Option<ListingTime>,
 	pub limit: Option<u8>,
+	/// Include adult results in every search mode. Defaults to false.
+	pub include_nsfw: bool,
 	pub cursor: Option<String>,
 }
 impl Request {
@@ -24,11 +30,17 @@ impl Request {
 	pub fn limit(&self) -> u8 {
 		self.limit.unwrap_or(25)
 	}
+	pub fn top_time(&self) -> ListingTime {
+		self.t.unwrap_or(ListingTime::All)
+	}
 	fn binding(&self) -> Self {
 		let mut r = self.clone();
 		r.cursor = None;
 		r.limit = Some(self.limit());
 		r.sort = Some(self.sort().into());
+		if self.sort() == "top" {
+			r.t = Some(self.top_time());
+		}
 		r
 	}
 }
@@ -117,6 +129,9 @@ fn plan(request: &Request, expr: &Expr) -> Result<Plan> {
 		return Err(error("invalid_value", "Page size must be 25, 50, or 100"));
 	}
 	let sort = request.sort();
+	if request.t.is_some() && sort != "top" {
+		return Err(error("invalid_value", "The t parameter applies only to Top; use QL date predicates for other sorts"));
+	}
 	if !request.kind.sorts().contains(&sort) {
 		return Err(error("unsupported_sort", "This REST discovery plan does not support that sort"));
 	}
@@ -179,11 +194,18 @@ impl RedditService {
 
 type Upstream = std::result::Result<crate::models::Listing<PublicThing>, crate::service::ServiceError>;
 trait Source: Sync {
-	fn page(&self, plan: &Plan, sort: &str, listing: ListingQuery) -> impl std::future::Future<Output = Upstream> + Send;
+	fn page(&self, plan: &Plan, request: &Request, listing: ListingQuery) -> impl std::future::Future<Output = Upstream> + Send;
 	fn parents(&self, ids: &[String]) -> impl std::future::Future<Output = Upstream> + Send;
 }
 impl Source for RedditService {
-	async fn page(&self, plan: &Plan, sort: &str, listing: ListingQuery) -> Upstream {
+	async fn page(&self, plan: &Plan, request: &Request, mut listing: ListingQuery) -> Upstream {
+		let sort = request.sort();
+		if matches!(plan, Plan::Posts(_)) && sort == "top" {
+			listing.time = Some(request.top_time());
+		}
+		if matches!(plan, Plan::Comments(..)) {
+			listing.sr_detail = Some(true);
+		}
 		match plan {
 			Plan::Posts(q) => {
 				self
@@ -191,6 +213,7 @@ impl Source for RedditService {
 						&SearchQuery {
 							listing,
 							query: q.clone(),
+							include_over_18: Some(request.include_nsfw),
 							sort: Some(match sort {
 								"new" => SearchSort::New,
 								"top" => SearchSort::Top,
@@ -225,6 +248,7 @@ impl Source for RedditService {
 						query: q.clone(),
 						search_query_id: None,
 						show_users: Some(false),
+						include_over_18: Some(request.include_nsfw),
 						sort: Some(if sort == "activity" {
 							SubredditSearchSort::Activity
 						} else {

@@ -155,6 +155,7 @@ pub(super) fn subreddit_search_query(raw_query: Option<&str>) -> Result<Subreddi
 		query: String::new(),
 		search_query_id: None,
 		show_users: None,
+		include_over_18: None,
 		sort: None,
 		typeahead_active: None,
 	};
@@ -163,6 +164,7 @@ pub(super) fn subreddit_search_query(raw_query: Option<&str>) -> Result<Subreddi
 			"q" => query.query = value.into_owned(),
 			"search_query_id" => query.search_query_id = Some(value.into_owned()),
 			"show_users" => query.show_users = Some(boolean("show_users", &value)?),
+			"include_over_18" => query.include_over_18 = Some(boolean("include_over_18", &value)?),
 			"sort" => {
 				query.sort = Some(match value.as_ref() {
 					"relevance" => SubredditSearchSort::Relevance,

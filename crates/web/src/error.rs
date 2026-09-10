@@ -9,6 +9,8 @@ use thiserror::Error;
 pub enum AppError {
 	#[error("invalid feed sort")]
 	InvalidSort,
+	#[error("invalid feed time")]
+	InvalidFeedTime,
 	#[error("invalid comment sort")]
 	InvalidCommentSort,
 	#[error("post not found")]
@@ -20,7 +22,7 @@ pub enum AppError {
 impl IntoResponse for AppError {
 	fn into_response(self) -> Response {
 		let status = match self {
-			Self::InvalidSort | Self::InvalidCommentSort => StatusCode::BAD_REQUEST,
+			Self::InvalidSort | Self::InvalidFeedTime | Self::InvalidCommentSort => StatusCode::BAD_REQUEST,
 			Self::PostNotFound => StatusCode::NOT_FOUND,
 			Self::Service(_) => StatusCode::BAD_GATEWAY,
 		};

@@ -9,6 +9,7 @@ pub struct SearchQuery {
 	#[param(max_length = 5)]
 	pub category: Option<String>,
 	pub include_facets: Option<bool>,
+	pub include_over_18: Option<bool>,
 	#[param(rename = "q", max_length = 512)]
 	pub query: String,
 	pub restrict_sr: Option<bool>,

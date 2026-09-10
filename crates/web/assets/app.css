@@ -74,35 +74,30 @@ a:focus-visible {
   color: var(--accent);
 }
 
-.feed-sorts {
+.sort-controls {
   display: flex;
+  align-items: center;
   min-width: 0;
-  overflow-x: auto;
-  white-space: nowrap;
+  gap: 0.5em;
 }
 
-.sort-link {
-  margin: 0 0.25rem;
-  color: rgb(51 51 51 / 67%);
-  font-size: 1rem;
-  font-weight: bold;
+.sort-controls form {
+  margin: 0;
 }
 
-.feed-sorts .sort-link:first-child,
-.community-sorts .sort-link:first-child {
-  margin-left: 0;
-}
-
-.sort-link:hover {
+.sort-controls select,
+.sort-controls button {
+  min-height: 2rem;
+  border: 1px solid rgb(51 51 51 / 35%);
+  border-radius: 2px;
+  background: var(--background);
   color: var(--text);
-  text-decoration: none;
+  font: inherit;
+  font-weight: normal;
 }
 
-.sort-link.active {
-  border-bottom: 0.25em solid var(--accent);
-  padding: 0 0 0.25rem;
-  color: var(--text);
-  text-decoration: none;
+.sort-controls select {
+  padding: 0.2em 0.4em;
 }
 
 .page {
@@ -323,29 +318,6 @@ a:focus-visible {
   font-size: 1rem;
 }
 
-.comment-sorts {
-  display: flex;
-  gap: 0.75em;
-  overflow-x: auto;
-  white-space: nowrap;
-}
-
-.comment-sort {
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: bold;
-}
-
-.comment-sort:hover,
-.comment-sort.active {
-  color: var(--text);
-  text-decoration: none;
-}
-
-.comment-sort.active {
-  border-bottom: 2px solid var(--accent);
-}
-
 .comment-tree {
   margin: 0 0 0 20px;
   padding: 0 0 0 6px;
@@ -499,17 +471,13 @@ a:focus-visible {
   font-weight: bold;
 }
 
-.community-nav,
-.community-sorts {
+.community-nav {
   display: flex;
   min-width: 0;
+  align-items: baseline;
   gap: 0.65em;
   overflow-x: auto;
   white-space: nowrap;
-}
-
-.community-nav {
-  align-items: baseline;
   color: var(--muted);
 }
 
@@ -521,6 +489,11 @@ a:focus-visible {
   border-bottom: 0.25em solid var(--accent);
   padding-bottom: 0.25rem;
   color: var(--text);
+}
+
+.community-heading,
+.community-feed .sort-controls {
+  margin-left: -40px;
 }
 
 .community-heading {
@@ -553,9 +526,8 @@ a:focus-visible {
   min-width: 0;
 }
 
-.community-sorts {
+.community-feed .sort-controls {
   margin-bottom: 0.5em;
-  margin-left: -40px;
 }
 
 .community-panel {
@@ -779,8 +751,16 @@ a:focus-visible {
   font-weight: bold;
 }
 
-.search-primary-controls .search-choices {
+.search-primary-controls .search-choices,
+.search-primary-controls .search-order-values {
   margin-inline-start: 6rem;
+}
+
+.search-order-values {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em;
 }
 
 .search-diagnostic {
@@ -878,7 +858,8 @@ a:focus-visible {
     margin-left: -0.5rem;
   }
 
-  .community-sorts {
+  .community-heading,
+  .community-feed .sort-controls {
     margin-left: -0.5rem;
   }
 
@@ -913,7 +894,7 @@ a:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .comment-sorts {
+  .comments-header .sort-controls {
     margin-top: 0.35em;
   }
 

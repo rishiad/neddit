@@ -171,6 +171,9 @@ fn encode_search_query(query: &SearchQuery) -> String {
 	if let Some(include_facets) = query.include_facets {
 		serializer.append_pair("include_facets", bool_string(include_facets));
 	}
+	if let Some(include) = query.include_over_18 {
+		serializer.append_pair("include_over_18", if include { "on" } else { "off" });
+	}
 	if let Some(restrict_sr) = query.restrict_sr {
 		serializer.append_pair("restrict_sr", bool_string(restrict_sr));
 	}

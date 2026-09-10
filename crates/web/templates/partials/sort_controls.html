@@ -1,0 +1,27 @@
+<nav class="sort-controls" aria-label="{{ controls.label }}">
+  <form action="{{ controls.action }}" method="get">
+    <label>
+      <span class="visually-hidden">{{ controls.choice_label }}</span>
+      <select name="sort" onchange="this.form.requestSubmit()">
+        {% for choice in controls.sorts %}
+          <option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript><button type="submit">Apply sort</button></noscript>
+  </form>
+  {% if !controls.times.is_empty() %}
+    <form action="{{ controls.action }}" method="get">
+      <input type="hidden" name="sort" value="top">
+      <label>
+        <span class="visually-hidden">Top posts from</span>
+        <select name="t" onchange="this.form.requestSubmit()">
+          {% for choice in controls.times %}
+            <option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <noscript><button type="submit">Apply time</button></noscript>
+    </form>
+  {% endif %}
+</nav>

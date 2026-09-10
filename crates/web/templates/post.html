@@ -4,7 +4,7 @@
 
 {% block nav %}
   <nav class="post-nav" aria-label="Post context">
-    <span>r/{{ post.item.subreddit }}</span>
+    <a href="/r/{{ post.item.subreddit }}">r/{{ post.item.subreddit }}</a>
   </nav>
 {% endblock %}
 
@@ -37,11 +37,7 @@
   <section class="comments" aria-labelledby="comments-heading">
     <header class="comments-header">
       <h2 id="comments-heading">{{ comments_heading }}</h2>
-      <nav class="comment-sorts" aria-label="Comment sorting">
-        {% for sort in sorts %}
-          <a class="comment-sort{% if sort.active %} active{% endif %}" href="{{ sort.href }}"{% if sort.active %} aria-current="page"{% endif %}>{{ sort.label }}</a>
-        {% endfor %}
-      </nav>
+      {% include "partials/sort_controls.html" %}
     </header>
 
     {% if has_comments %}

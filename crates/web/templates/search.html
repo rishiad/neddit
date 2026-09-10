@@ -12,7 +12,7 @@
 
     <div class="search-primary-controls">
       <fieldset hx-get="/search/controls" hx-trigger="change" hx-target="#search-sort-controls"
-                hx-swap="outerHTML" hx-include="[name='kind'], [name='sort']" hx-sync="this:replace"
+                hx-swap="outerHTML" hx-include="[name='kind'], [name='sort'], [name='t']" hx-sync="closest form:replace"
                 hx-disabled-elt=".search-query button">
         <legend>Search:</legend>
         <div class="search-choices">
@@ -23,13 +23,15 @@
       </fieldset>
 
       {% include "search_sorts.html" %}
-    </div>
 
-    <label>Results per page
-      <select name="limit">
-        {% for choice in limits %}<option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
-      </select>
-    </label>
+      <label><input type="checkbox" name="include_nsfw" value="true"{% if include_nsfw %} checked{% endif %}> Include NSFW results</label>
+
+      <label>Results per page
+        <select name="limit">
+          {% for choice in limits %}<option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
   </form>
 
   {% if !diagnostic.is_empty() %}
@@ -40,8 +42,6 @@
   {% if searched %}
     <section class="search-results" aria-labelledby="search-results-heading">
       <h1 id="search-results-heading">{{ result_count }} results on this page for <span class="search-term">{{ query }}</span></h1>
-      <p>Order: {{ ranking }}. Continuation: {{ continuation }}.</p>
-      <details><summary>Coverage limits</summary><ul>{% for notice in coverage %}<li>{{ notice }}</li>{% endfor %}</ul></details>
       {% if result_count == 0 %}
         {% if has_next %}
           <p class="comments-empty">This page has no publishable matches. Continue to inspect more candidates.</p>

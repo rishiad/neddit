@@ -349,6 +349,9 @@ fn encode_subreddit_search_query(query: &SubredditSearchQuery) -> String {
 	if let Some(show_users) = query.show_users {
 		serializer.append_pair("show_users", bool_string(show_users));
 	}
+	if let Some(include) = query.include_over_18 {
+		serializer.append_pair("include_over_18", if include { "on" } else { "off" });
+	}
 	if let Some(sort) = query.sort {
 		serializer.append_pair("sort", sort.as_str());
 	}

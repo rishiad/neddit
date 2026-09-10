@@ -20,11 +20,7 @@
 
   <div class="community-layout">
     <section class="community-feed" aria-label="{{ community.display_name_prefixed }} posts">
-      <nav class="community-sorts" aria-label="Post sorting">
-        {% for sort in sorts %}
-          <a class="sort-link{% if sort.active %} active{% endif %}" href="{{ sort.href }}"{% if sort.active %} aria-current="page"{% endif %}>{{ sort.label }}</a>
-        {% endfor %}
-      </nav>
+      {% include "partials/sort_controls.html" %}
       {% include "partials/feed_list.html" %}
     </section>
 

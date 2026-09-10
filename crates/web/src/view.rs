@@ -1,4 +1,5 @@
 use std::{
+	borrow::Cow,
 	collections::HashSet,
 	time::{SystemTime, UNIX_EPOCH},
 };
@@ -7,6 +8,7 @@ use ammonia::{Builder, UrlRelative};
 use askama::Template;
 use askama_web::WebTemplate;
 
+use neddit_api::media::rewrite_reddit_navigation;
 use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, PublicThing, Subreddit, WikiPage, WikiPageListing};
 use url::{form_urlencoded, Url};
 
@@ -27,27 +29,29 @@ pub struct FeedItem {
 }
 
 #[derive(Clone, Debug)]
-pub struct SortLink {
+pub struct SelectChoice {
+	pub value: &'static str,
 	pub label: &'static str,
-	pub href: String,
-	pub active: bool,
+	pub checked: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct SortControls {
+	pub action: String,
+	pub label: &'static str,
+	pub choice_label: &'static str,
+	pub sorts: Vec<SelectChoice>,
+	pub times: Vec<SelectChoice>,
 }
 
 #[derive(Template, WebTemplate)]
 #[template(path = "feed.html")]
 pub struct FeedTemplate {
 	pub items: Vec<FeedItem>,
-	pub sorts: Vec<SortLink>,
+	pub controls: SortControls,
 	pub next_url: String,
 	pub has_next: bool,
 	pub feed_label: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct SearchChoice {
-	pub value: &'static str,
-	pub label: &'static str,
-	pub checked: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -66,9 +70,11 @@ pub struct SearchResultView {
 #[template(path = "search.html")]
 pub struct SearchTemplate {
 	pub query: String,
-	pub kinds: Vec<SearchChoice>,
-	pub sorts: Vec<SearchChoice>,
-	pub limits: Vec<SearchChoice>,
+	pub include_nsfw: bool,
+	pub kinds: Vec<SelectChoice>,
+	pub sorts: Vec<SelectChoice>,
+	pub times: Vec<SelectChoice>,
+	pub limits: Vec<SelectChoice>,
 	pub results: Vec<SearchResultView>,
 	pub result_count: usize,
 	pub searched: bool,
@@ -76,9 +82,6 @@ pub struct SearchTemplate {
 	pub error_prefix: String,
 	pub error_text: String,
 	pub error_suffix: String,
-	pub coverage: Vec<String>,
-	pub ranking: String,
-	pub continuation: String,
 	pub next_url: String,
 	pub has_next: bool,
 }
@@ -103,7 +106,7 @@ pub struct CommunityView {
 pub struct SubredditTemplate {
 	pub community: CommunityView,
 	pub items: Vec<FeedItem>,
-	pub sorts: Vec<SortLink>,
+	pub controls: SortControls,
 	pub next_url: String,
 	pub has_next: bool,
 	pub feed_label: String,
@@ -164,7 +167,7 @@ pub enum CommentTreeEvent {
 pub struct PostTemplate {
 	pub post: PostView,
 	pub comment_tree: Vec<CommentTreeEvent>,
-	pub sorts: Vec<SortLink>,
+	pub controls: SortControls,
 	pub comments_heading: String,
 	pub has_comments: bool,
 }
@@ -176,10 +179,11 @@ pub struct MoreCommentsTemplate {
 }
 
 pub fn feed_item(post: &Post) -> FeedItem {
+	let permalink = local_web_navigation(&post.permalink).unwrap_or_else(|| post.permalink.clone());
 	let href = if post.is_self {
-		post.permalink.clone()
+		permalink.clone()
 	} else {
-		safe_outbound(&post.url).unwrap_or_else(|| post.permalink.clone())
+		safe_outbound(&post.url).unwrap_or_else(|| permalink.clone())
 	};
 	let domain = outbound_domain(&href).unwrap_or_default();
 	let mut badges = Vec::with_capacity(4);
@@ -203,7 +207,7 @@ pub fn feed_item(post: &Post) -> FeedItem {
 		domain,
 		author: display_author(&post.author),
 		subreddit: post.subreddit.clone(),
-		permalink: post.permalink.clone(),
+		permalink,
 		age: age(post.created_utc),
 		score: if post.hide_score { "—".into() } else { compact(post.score.max(0).unsigned_abs()) },
 		comments: compact(post.num_comments),
@@ -231,7 +235,7 @@ pub fn search_result(item: &PublicThing) -> Option<SearchResultView> {
 			let subreddit = &thing.data;
 			Some(SearchResultView {
 				fullname: subreddit.name.clone(),
-				metric: compact(subreddit.subscribers),
+				metric: subreddit.subscribers.map_or_else(|| "—".into(), compact),
 				metric_label: "members".into(),
 				title: subreddit.display_name_prefixed.clone(),
 				href: format!("/r/{}", subreddit.display_name),
@@ -257,19 +261,19 @@ pub fn search_result(item: &PublicThing) -> Option<SearchResultView> {
 	}
 }
 
-pub fn search_choices(active_kind: &str, active_sort: &str, active_limit: u8) -> (Vec<SearchChoice>, Vec<SearchChoice>, Vec<SearchChoice>) {
+pub fn search_choices(active_kind: &str, active_sort: &str, active_limit: u8) -> (Vec<SelectChoice>, Vec<SelectChoice>, Vec<SelectChoice>) {
 	use neddit_api::search::Mode;
 	let choices = |values: &[(&'static str, &'static str)], active: &str| {
 		values
 			.iter()
-			.map(|&(value, label)| SearchChoice {
+			.map(|&(value, label)| SelectChoice {
 				value,
 				label,
 				checked: value == active,
 			})
 			.collect()
 	};
-	let mut sorts: Vec<SearchChoice> = choices(
+	let mut sorts: Vec<SelectChoice> = choices(
 		&[("relevance", "Relevance"), ("new", "New"), ("top", "Top"), ("hot", "Hot"), ("activity", "Activity")],
 		active_sort,
 	);
@@ -297,7 +301,7 @@ pub fn community_view(subreddit: &Subreddit) -> CommunityView {
 		subreddit.title.trim().to_owned()
 	};
 	let public_description = nonempty(subreddit.public_description.trim());
-	let description = nonempty(subreddit.description.trim());
+	let description = subreddit.description.as_deref().and_then(|s| nonempty(s.trim()));
 	let description_html = subreddit.description_html.as_deref().map(sanitize_html).and_then(|html| nonempty(&html));
 	let posts_url = format!("/r/{}", subreddit.display_name);
 	CommunityView {
@@ -306,12 +310,12 @@ pub fn community_view(subreddit: &Subreddit) -> CommunityView {
 		public_description,
 		description,
 		description_html,
-		members: compact(subreddit.subscribers),
+		members: subreddit.subscribers.map_or_else(|| "—".into(), compact),
 		active: subreddit.accounts_active.map_or_else(|| "—".into(), compact),
 		wiki_url: format!("{posts_url}/wiki/index"),
 		posts_url,
 		has_wiki: subreddit.wiki_enabled.unwrap_or(false),
-		over_18: subreddit.over18,
+		over_18: subreddit.over18 == Some(true),
 	}
 }
 
@@ -338,7 +342,16 @@ pub fn wiki_view(subreddit: &str, page: &str, wiki: &WikiPage, pages: &WikiPageL
 }
 
 fn sanitize_html(value: &str) -> String {
-	Builder::new().url_relative(UrlRelative::PassThrough).clean(value).to_string()
+	Builder::new()
+		.url_relative(UrlRelative::PassThrough)
+		.attribute_filter(|element, attribute, value| {
+			if element == "a" && attribute == "href" {
+				return Some(local_web_navigation(value).map_or_else(|| Cow::Borrowed(value), Cow::Owned));
+			}
+			Some(Cow::Borrowed(value))
+		})
+		.clean(value)
+		.to_string()
 }
 
 fn nonempty(value: &str) -> Option<String> {
@@ -386,55 +399,76 @@ pub fn loaded_comment_tree(children: &[CommentChild], parent_id: &str, link_id: 
 	tree
 }
 
-pub fn sort_links(active: &str) -> Vec<SortLink> {
-	[("hot", "Hot"), ("new", "New"), ("rising", "Rising"), ("top", "Top")]
+pub fn feed_controls(action: &str, active_sort: &str, active_time: &str, include_controversial: bool) -> SortControls {
+	let mut sorts = vec![("hot", "Hot"), ("new", "New"), ("rising", "Rising"), ("top", "Top")];
+	if include_controversial {
+		sorts.push(("controversial", "Controversial"));
+	}
+	SortControls {
+		action: action.into(),
+		label: "Post sorting",
+		choice_label: "Sort posts",
+		sorts: select_choices(sorts, active_sort),
+		times: if active_sort == "top" {
+			select_choices(
+				vec![
+					("hour", "Past hour"),
+					("day", "Past 24 hours"),
+					("week", "Past week"),
+					("month", "Past month"),
+					("year", "Past year"),
+					("all", "All time"),
+				],
+				active_time,
+			)
+		} else {
+			Vec::new()
+		},
+	}
+}
+
+pub fn comment_sort_controls(active: &str, permalink: &str) -> SortControls {
+	SortControls {
+		action: permalink.into(),
+		label: "Comment sorting",
+		choice_label: "Sort comments",
+		sorts: select_choices(
+			[("best", "Best"), ("top", "Top"), ("new", "New"), ("old", "Old"), ("controversial", "Controversial")],
+			active,
+		),
+		times: Vec::new(),
+	}
+}
+
+fn select_choices(values: impl IntoIterator<Item = (&'static str, &'static str)>, active: &str) -> Vec<SelectChoice> {
+	values
 		.into_iter()
-		.map(|(value, label)| SortLink {
+		.map(|(value, label)| SelectChoice {
+			value,
 			label,
-			href: if value == "hot" { "/".into() } else { format!("/?sort={value}") },
-			active: value == active,
+			checked: value == active,
 		})
 		.collect()
 }
 
-pub fn subreddit_sort_links(active: &str, subreddit: &str) -> Vec<SortLink> {
-	let base = format!("/r/{subreddit}");
-	[("hot", "Hot"), ("new", "New"), ("rising", "Rising"), ("top", "Top"), ("controversial", "Controversial")]
-		.into_iter()
-		.map(|(value, label)| SortLink {
-			label,
-			href: if value == "hot" { base.clone() } else { format!("{base}?sort={value}") },
-			active: value == active,
-		})
-		.collect()
+pub fn next_url(sort: &str, time: &str, after: Option<&str>, count: u32) -> String {
+	listing_next_url("/", sort, time, after, count)
 }
 
-pub fn comment_sort_links(active: &str, permalink: &str) -> Vec<SortLink> {
-	[("best", "Best"), ("top", "Top"), ("new", "New"), ("old", "Old"), ("controversial", "Controversial")]
-		.into_iter()
-		.map(|(value, label)| SortLink {
-			label,
-			href: if value == "best" { permalink.into() } else { format!("{permalink}?sort={value}") },
-			active: value == active,
-		})
-		.collect()
+pub fn subreddit_next_url(subreddit: &str, sort: &str, time: &str, after: Option<&str>, count: u32) -> String {
+	listing_next_url(&format!("/r/{subreddit}"), sort, time, after, count)
 }
 
-pub fn next_url(sort: &str, after: Option<&str>, count: u32) -> String {
-	listing_next_url("/", sort, after, count)
-}
-
-pub fn subreddit_next_url(subreddit: &str, sort: &str, after: Option<&str>, count: u32) -> String {
-	listing_next_url(&format!("/r/{subreddit}"), sort, after, count)
-}
-
-fn listing_next_url(base: &str, sort: &str, after: Option<&str>, count: u32) -> String {
+fn listing_next_url(base: &str, sort: &str, time: &str, after: Option<&str>, count: u32) -> String {
 	let Some(after) = after else {
 		return String::new();
 	};
 	let mut query = form_urlencoded::Serializer::new(String::new());
 	if sort != "hot" {
 		query.append_pair("sort", sort);
+	}
+	if sort == "top" {
+		query.append_pair("t", time);
 	}
 	query.append_pair("after", after);
 	query.append_pair("count", &count.to_string());
@@ -453,7 +487,33 @@ fn wiki_path(subreddit: &str, page: &str) -> String {
 
 fn safe_outbound(value: &str) -> Option<String> {
 	let url = Url::parse(value).ok()?;
-	matches!(url.scheme(), "http" | "https").then(|| url.to_string())
+	if !matches!(url.scheme(), "http" | "https") {
+		return None;
+	}
+	Some(local_web_navigation(url.as_str()).unwrap_or_else(|| url.to_string()))
+}
+
+fn local_web_navigation(value: &str) -> Option<String> {
+	let local = rewrite_reddit_navigation(value)?;
+	let base = Url::parse("http://neddit.local").expect("static base URL is valid");
+	let url = base.join(&local).ok()?;
+	let segments: Vec<_> = url.path_segments()?.filter(|segment| !segment.is_empty()).collect();
+
+	let supported = matches!(segments.as_slice(), [] | ["search"] | ["comments", _, ..] | ["r", _] | ["r", _, "comments" | "wiki", ..]);
+	if !supported {
+		return None;
+	}
+
+	let mut local = url.path().to_owned();
+	if let Some(query) = url.query() {
+		local.push('?');
+		local.push_str(query);
+	}
+	if let Some(fragment) = url.fragment() {
+		local.push('#');
+		local.push_str(fragment);
+	}
+	Some(local)
 }
 
 fn outbound_domain(value: &str) -> Option<String> {

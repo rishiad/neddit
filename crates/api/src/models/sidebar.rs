@@ -3,6 +3,6 @@ use utoipa::ToSchema;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct Sidebar {
-	pub description: String,
+	pub description: Option<String>,
 	pub description_html: String,
 }

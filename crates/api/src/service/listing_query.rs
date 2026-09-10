@@ -14,8 +14,9 @@ impl ListingShow {
 	}
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ToSchema)]
 #[schema(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum ListingTime {
 	Hour,
 	Day,
@@ -26,7 +27,7 @@ pub enum ListingTime {
 }
 
 impl ListingTime {
-	pub(super) const fn as_str(self) -> &'static str {
+	pub const fn as_str(self) -> &'static str {
 		match self {
 			Self::Hour => "hour",
 			Self::Day => "day",

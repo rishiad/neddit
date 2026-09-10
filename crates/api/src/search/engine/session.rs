@@ -39,6 +39,42 @@ enum End {
 	Exhausted,
 	Stopped,
 }
+
+pub(super) fn comment_window(request: &Request, item: &PublicThing, frozen: i128) -> Truth {
+	if request.kind != Mode::Comments || request.sort() != "top" {
+		return Truth::True;
+	}
+	let seconds_back: i128 = match request.top_time() {
+		ListingTime::Hour => 3600,
+		ListingTime::Day => 86400,
+		ListingTime::Week => 7 * 86400,
+		ListingTime::Month => 30 * 86400,
+		ListingTime::Year => 365 * 86400,
+		ListingTime::All => return Truth::True,
+	};
+	match seconds(order_fields(item).0) {
+		Some(created) if created >= frozen - seconds_back * 1_000_000_000 && created <= frozen => Truth::True,
+		Some(_) => Truth::False,
+		None => Truth::Unknown,
+	}
+}
+
+fn visibility(item: &PublicThing, include_nsfw: bool) -> Truth {
+	if include_nsfw {
+		return Truth::True;
+	}
+	let adult = match item {
+		PublicThing::Post(p) => Some(p.data.over_18),
+		PublicThing::Subreddit(s) => s.data.over18,
+		PublicThing::Comment(c) => c.data.extra.get("over_18").and_then(serde_json::Value::as_bool),
+		PublicThing::User(_) => None,
+	};
+	match adult {
+		Some(false) => Truth::True,
+		Some(true) => Truth::False,
+		None => Truth::Unknown,
+	}
+}
 struct Collection {
 	expr: Expr,
 	plan: Plan,
@@ -219,7 +255,7 @@ impl Collection {
 		let response = source
 			.page(
 				&self.plan,
-				request.sort(),
+				request,
 				ListingQuery {
 					after: self.after.clone(),
 					limit: Some(limit),
@@ -291,12 +327,14 @@ impl Collection {
 	fn frozen_ns(&self) -> i128 {
 		i128::from(self.frozen.timestamp()) * 1_000_000_000 + i128::from(self.frozen.timestamp_subsec_nanos())
 	}
-	async fn hydrate(&mut self, source: &impl Source, batch: &[PublicThing]) {
+	async fn hydrate(&mut self, source: &impl Source, batch: &[PublicThing], request: &Request) {
 		if self.failed || !needs_parent(&self.expr) {
 			return;
 		}
 		let mut ids: Vec<_> = batch
 			.iter()
+			.filter(|item| visibility(item, request.include_nsfw) == Truth::True)
+			.filter(|item| comment_window(request, item, self.frozen_ns()) == Truth::True)
 			.filter_map(|item| match item {
 				PublicThing::Comment(c) if !self.parents.contains_key(&c.data.link_id) && self.expr.evaluate(&self.evaluated_record(item), self.frozen_ns()) == Truth::Unknown => {
 					Some(c.data.link_id.clone())
@@ -364,7 +402,7 @@ impl Collection {
 				return Ok(());
 			}
 		}
-		self.hydrate(source, &batch).await;
+		self.hydrate(source, &batch, request).await;
 		for item in batch {
 			if new {
 				let time = order_fields(&item).0;
@@ -373,7 +411,12 @@ impl Collection {
 				}
 				self.last_time = Some(time);
 			}
-			match self.expr.evaluate(&self.evaluated_record(&item), self.frozen_ns()) {
+			match self
+				.expr
+				.evaluate(&self.evaluated_record(&item), self.frozen_ns())
+				.and(visibility(&item, request.include_nsfw))
+				.and(comment_window(request, &item, self.frozen_ns()))
+			{
 				Truth::True => {
 					self.observed += 1;
 					if new {
@@ -440,6 +483,12 @@ impl Collection {
 			"stopped_early"
 		};
 		let mut coverage = self.notices.clone();
+		if request.kind == Mode::Comments && top && request.top_time() != ListingTime::All {
+			coverage.push("Comment Top windows use frozen creation time within available history; month means 30 days and year means 365 days.".into());
+		}
+		if !request.include_nsfw {
+			coverage.push("NSFW results are excluded. Candidates with missing or invalid NSFW metadata remain unconfirmed.".into());
+		}
 		if self.unknown > 0 {
 			coverage.push(format!("{} candidates remain unresolved because required metadata is unavailable.", self.unknown));
 		}

@@ -1,11 +1,7 @@
 {% extends "base.html" %}
 
 {% block nav %}
-  <nav class="feed-sorts" aria-label="Front page sorting">
-    {% for sort in sorts %}
-      <a class="sort-link{% if sort.active %} active{% endif %}" href="{{ sort.href }}"{% if sort.active %} aria-current="page"{% endif %}>{{ sort.label }}</a>
-    {% endfor %}
-  </nav>
+  {% include "partials/sort_controls.html" %}
 {% endblock %}
 
 {% block content %}

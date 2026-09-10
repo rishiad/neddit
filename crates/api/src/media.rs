@@ -202,7 +202,11 @@ impl MediaSigner {
 }
 
 pub fn rewrite_reddit_navigation(url: &str) -> Option<String> {
-	let mut target = Url::parse(url).ok()?;
+	let decoded = if url.starts_with("//") { format!("https:{url}") } else { url.to_owned() }.replace("&amp;", "&");
+	let mut target = Url::parse(&decoded).ok()?;
+	if !matches!(target.scheme(), "http" | "https") || !target.username().is_empty() || target.password().is_some() {
+		return None;
+	}
 	let host = target.host_str()?.to_ascii_lowercase();
 	if is_reddit_navigation_host(&host) {
 		Some(local_path(&target))

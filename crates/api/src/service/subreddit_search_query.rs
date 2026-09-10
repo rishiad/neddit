@@ -42,6 +42,7 @@ pub struct SubredditSearchQuery {
 	pub query: String,
 	pub search_query_id: Option<String>,
 	pub show_users: Option<bool>,
+	pub include_over_18: Option<bool>,
 	#[param(inline)]
 	pub sort: Option<SubredditSearchSort>,
 	#[param(value_type = String)]

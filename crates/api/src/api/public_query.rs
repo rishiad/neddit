@@ -14,6 +14,7 @@ pub(super) fn search_query(raw_query: Option<&str>) -> Result<SearchQuery, ApiEr
 		match key.as_ref() {
 			"category" => query.category = Some(value.into_owned()),
 			"include_facets" => query.include_facets = Some(boolean("include_facets", &value)?),
+			"include_over_18" => query.include_over_18 = Some(boolean("include_over_18", &value)?),
 			"q" => query.query = value.into_owned(),
 			"restrict_sr" => query.restrict_sr = Some(boolean("restrict_sr", &value)?),
 			"sort" => {

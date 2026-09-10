@@ -127,9 +127,6 @@ impl Sessions {
 			let (id, index) = cursor.split_once('.').ok_or_else(invalid_cursor)?;
 			let id = Uuid::parse_str(id).map_err(|_| invalid_cursor())?;
 			let index = index.parse::<usize>().map_err(|_| invalid_cursor())?;
-			if index == 0 {
-				return Err(invalid_cursor());
-			}
 			let entries = self.entries.lock().await;
 			let entry = entries
 				.iter()
@@ -510,6 +507,8 @@ impl Collection {
 		};
 		Ok(Page {
 			items,
+			number: u32::try_from(index + 1).expect("bounded search page count fits in u32"),
+			previous_cursor: (index > 0).then(|| format!("{id}.{}", index - 1)),
 			cursor: more.then(|| format!("{id}.{}", index + 1)),
 			ranking,
 			continuation: continuation.into(),

@@ -8,6 +8,7 @@ pub mod posts;
 pub mod public;
 pub mod subreddit;
 pub mod subreddit_rules;
+pub mod thread_comment_search;
 pub mod trophy;
 pub mod user;
 pub mod wiki;

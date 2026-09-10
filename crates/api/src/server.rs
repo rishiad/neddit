@@ -36,6 +36,14 @@ impl MediaProxy {
 	pub fn new(client: RedditClient, signer: MediaSigner, video: VideoResolver) -> Self {
 		Self { client, signer, video }
 	}
+
+	pub fn signer(&self) -> &MediaSigner {
+		&self.signer
+	}
+
+	pub async fn resolve_video(&self, url: &str) -> Result<VideoPlayback, VideoError> {
+		self.video.resolve(url, &self.signer).await
+	}
 }
 
 pub fn router(media: MediaProxy) -> Router {
@@ -64,7 +72,7 @@ pub(crate) struct VideoQuery {
 	tag = "media"
 )]
 pub(crate) async fn resolve_video(State(media): State<MediaProxy>, Query(query): Query<VideoQuery>) -> Result<axum::Json<VideoPlayback>, VideoError> {
-	media.video.resolve(&query.url, &media.signer).await.map(axum::Json)
+	media.resolve_video(&query.url).await.map(axum::Json)
 }
 
 pub fn with_middleware(app: Router) -> Router {
@@ -109,13 +117,14 @@ async fn proxy_media(State(media): State<MediaProxy>, Path((signature, encoded))
 
 async fn proxy_video(State(media): State<MediaProxy>, Path((signature, encoded)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ProxyError> {
 	let mut target = decode_video_target(&media.signer, &signature, &encoded)?;
+	let user_agent = media.video.user_agent_for(&target).await;
 	let etag = format!("\"{signature}\"");
 	if request_has_etag(&headers, &etag) {
 		return not_modified(&etag, VIDEO_CACHE_CONTROL);
 	}
 
 	for redirect in 0..=MAX_MEDIA_REDIRECTS {
-		let response = media.client.proxy(target.to_string(), &headers).await?;
+		let response = media.client.proxy_external(target.to_string(), &headers, user_agent.as_deref()).await?;
 		if response.status() == StatusCode::NOT_MODIFIED || !response.status().is_redirection() {
 			return finish_video_response(response, &target, &media.signer, &etag).await;
 		}

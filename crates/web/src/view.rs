@@ -8,8 +8,9 @@ use ammonia::{Builder, UrlRelative};
 use askama::Template;
 use askama_web::WebTemplate;
 
-use neddit_api::media::rewrite_reddit_navigation;
+use neddit_api::media::{rewrite_reddit_navigation, MediaSigner};
 use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, PublicThing, Subreddit, WikiPage, WikiPageListing};
+use neddit_api::video::{VideoPlayback, VideoResolver};
 use url::{form_urlencoded, Url};
 
 #[derive(Clone, Debug)]
@@ -26,6 +27,13 @@ pub struct FeedItem {
 	pub comments: String,
 	pub stickied: bool,
 	pub badges: Vec<&'static str>,
+	pub video: Option<VideoView>,
+}
+
+#[derive(Clone, Debug)]
+pub struct VideoView {
+	pub player_url: String,
+	pub poster: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +48,8 @@ pub struct SortControls {
 	pub action: String,
 	pub label: &'static str,
 	pub choice_label: &'static str,
+	pub active_sort: &'static str,
+	pub query: String,
 	pub sorts: Vec<SelectChoice>,
 	pub times: Vec<SelectChoice>,
 }
@@ -49,9 +59,17 @@ pub struct SortControls {
 pub struct FeedTemplate {
 	pub items: Vec<FeedItem>,
 	pub controls: SortControls,
+	pub pagination: Pagination,
+	pub feed_label: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct Pagination {
+	pub page: u32,
+	pub previous_url: String,
+	pub has_previous: bool,
 	pub next_url: String,
 	pub has_next: bool,
-	pub feed_label: String,
 }
 
 #[derive(Clone, Debug)]
@@ -63,7 +81,13 @@ pub struct SearchResultView {
 	pub href: String,
 	pub domain: Option<String>,
 	pub summary: Option<String>,
-	pub metadata: Vec<String>,
+	pub metadata: Vec<SearchMetadata>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SearchMetadata {
+	pub text: String,
+	pub href: Option<String>,
 }
 
 #[derive(Template, WebTemplate)]
@@ -82,8 +106,7 @@ pub struct SearchTemplate {
 	pub error_prefix: String,
 	pub error_text: String,
 	pub error_suffix: String,
-	pub next_url: String,
-	pub has_next: bool,
+	pub pagination: Pagination,
 }
 
 #[derive(Clone, Debug)]
@@ -107,8 +130,7 @@ pub struct SubredditTemplate {
 	pub community: CommunityView,
 	pub items: Vec<FeedItem>,
 	pub controls: SortControls,
-	pub next_url: String,
-	pub has_next: bool,
+	pub pagination: Pagination,
 	pub feed_label: String,
 }
 
@@ -138,8 +160,30 @@ pub struct WikiTemplate {
 #[derive(Clone, Debug)]
 pub struct PostView {
 	pub item: FeedItem,
+	pub gallery: Option<GalleryView>,
+	pub image_url: Option<String>,
 	pub selftext: String,
 	pub show_selftext: bool,
+	pub hide_content: bool,
+	pub content_url: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct GalleryView {
+	pub image: GalleryImageView,
+	pub position: usize,
+	pub total: usize,
+	pub has_previous: bool,
+	pub previous_url: String,
+	pub has_next: bool,
+	pub next_url: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct GalleryImageView {
+	pub url: String,
+	pub alt: String,
+	pub caption: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -169,7 +213,26 @@ pub struct PostTemplate {
 	pub comment_tree: Vec<CommentTreeEvent>,
 	pub controls: SortControls,
 	pub comments_heading: String,
+	pub empty_message: &'static str,
 	pub has_comments: bool,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "partials/gallery.html")]
+pub struct GalleryTemplate {
+	pub gallery: GalleryView,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "partials/post_content.html")]
+pub struct PostContentTemplate {
+	pub post: PostView,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "partials/video_player.html")]
+pub struct VideoPlayerTemplate {
+	pub playback: VideoPlayback,
 }
 
 #[derive(Template, WebTemplate)]
@@ -213,13 +276,56 @@ pub fn feed_item(post: &Post) -> FeedItem {
 		comments: compact(post.num_comments),
 		stickied: post.stickied,
 		badges,
+		video: None,
 	}
 }
 
-pub fn search_result(item: &PublicThing) -> Option<SearchResultView> {
+pub fn feed_item_with_media(post: &Post, signer: &MediaSigner) -> FeedItem {
+	let mut item = feed_item(post);
+	if let Some(rewritten) = post_media_url(post, signer).filter(|_| !post.spoiler) {
+		item.href = rewritten;
+		item.domain.clear();
+		item.show_domain = false;
+	}
+	if VideoResolver::supports(&post.url) {
+		let mut query = form_urlencoded::Serializer::new(String::new());
+		query.append_pair("url", &post.url);
+		item.video = Some(VideoView {
+			player_url: format!("/video/player?{}", query.finish()),
+			poster: preview_url(post).and_then(|url| {
+				let rewritten = signer.rewrite_text(url);
+				rewritten.starts_with("/media/").then_some(rewritten)
+			}),
+		});
+	}
+	item
+}
+
+fn post_media_url(post: &Post, signer: &MediaSigner) -> Option<String> {
+	let rewritten = signer.rewrite_text(&post.url);
+	rewritten.starts_with("/media/").then_some(rewritten)
+}
+
+fn preview_url(post: &Post) -> Option<&str> {
+	let image = post.extra.get("preview")?.get("images")?.as_array()?.first()?;
+	let preview = if post.spoiler { image.pointer("/variants/obfuscated").unwrap_or(image) } else { image };
+	let sources = preview
+		.get("resolutions")
+		.and_then(|value| value.as_array())
+		.into_iter()
+		.flatten()
+		.chain(preview.get("source"));
+	let best = sources
+		.filter_map(|source| Some((source.get("width")?.as_u64()?, source.get("url")?.as_str()?)))
+		.min_by_key(|(width, _)| width.abs_diff(640))
+		.map(|(_, url)| url);
+	best.or_else(|| post.extra.get("thumbnail")?.as_str().filter(|url| url.starts_with("https://") || url.starts_with("//")))
+}
+
+pub fn search_result(item: &PublicThing, signer: &MediaSigner) -> Option<SearchResultView> {
 	match item {
 		PublicThing::Post(thing) => {
-			let item = feed_item(&thing.data);
+			let item = feed_item_with_media(&thing.data, signer);
 			Some(SearchResultView {
 				fullname: thing.data.name.clone(),
 				metric: item.score,
@@ -228,7 +334,12 @@ pub fn search_result(item: &PublicThing) -> Option<SearchResultView> {
 				href: item.href,
 				domain: item.show_domain.then_some(item.domain),
 				summary: None,
-				metadata: vec![format!("by {}", item.author), item.age, format!("{} comments", item.comments)],
+				metadata: vec![
+					linked_metadata(format!("by {}", item.author), reddit_user_url(&item.author)),
+					plain_metadata(item.age),
+					linked_metadata(format!("{} comments", item.comments), item.permalink),
+					linked_metadata(format!("in r/{}", thing.data.subreddit), format!("/r/{}", thing.data.subreddit)),
+				],
 			})
 		}
 		PublicThing::Subreddit(thing) => {
@@ -241,11 +352,19 @@ pub fn search_result(item: &PublicThing) -> Option<SearchResultView> {
 				href: format!("/r/{}", subreddit.display_name),
 				domain: None,
 				summary: nonempty(subreddit.public_description.trim()),
-				metadata: subreddit.accounts_active.map(|active| format!("{} active", compact(active))).into_iter().collect(),
+				metadata: subreddit
+					.accounts_active
+					.map(|active| linked_metadata(format!("{} active", compact(active)), format!("/r/{}", subreddit.display_name)))
+					.into_iter()
+					.collect(),
 			})
 		}
 		PublicThing::Comment(thing) => {
 			let c = &thing.data;
+			let mut metadata = vec![linked_metadata(format!("by {}", c.author), reddit_user_url(&c.author)), plain_metadata(age(c.created_utc))];
+			if let Some(subreddit) = c.extra.get("subreddit").and_then(|value| value.as_str()) {
+				metadata.push(linked_metadata(format!("in r/{subreddit}"), format!("/r/{subreddit}")));
+			}
 			Some(SearchResultView {
 				fullname: c.name.clone(),
 				metric: c.score.to_string(),
@@ -254,11 +373,25 @@ pub fn search_result(item: &PublicThing) -> Option<SearchResultView> {
 				href: format!("/comments/{}/_/{}", c.link_id.trim_start_matches("t3_"), c.id),
 				domain: None,
 				summary: None,
-				metadata: vec![format!("by {}", c.author)],
+				metadata,
 			})
 		}
 		PublicThing::User(_) => None,
 	}
+}
+
+fn linked_metadata(text: String, href: String) -> SearchMetadata {
+	SearchMetadata { text, href: Some(href) }
+}
+
+fn plain_metadata(text: String) -> SearchMetadata {
+	SearchMetadata { text, href: None }
+}
+
+fn reddit_user_url(author: &str) -> String {
+	let mut url = Url::parse("https://www.reddit.com").expect("static Reddit URL is valid");
+	url.path_segments_mut().expect("HTTPS URLs support path segments").extend(["user", author]);
+	url.to_string()
 }
 
 pub fn search_choices(active_kind: &str, active_sort: &str, active_limit: u8) -> (Vec<SelectChoice>, Vec<SelectChoice>, Vec<SelectChoice>) {
@@ -358,14 +491,86 @@ fn nonempty(value: &str) -> Option<String> {
 	(!value.is_empty()).then(|| value.to_owned())
 }
 
-pub fn post_view(post: &Post) -> PostView {
-	let item = feed_item(post);
+pub fn post_view(post: &Post, signer: &MediaSigner) -> PostView {
+	let item = feed_item_with_media(post, signer);
+	let gallery = gallery_view(post, signer, 0);
+	let image_url = if gallery.is_none() && item.video.is_none() && is_image_post(post) {
+		post_media_url(post, signer)
+	} else {
+		None
+	};
 	let selftext = post.selftext.trim().to_owned();
 	PostView {
-		show_selftext: post.is_self && !selftext.is_empty(),
+		show_selftext: !selftext.is_empty(),
 		item,
+		gallery,
+		image_url,
 		selftext,
+		hide_content: post.spoiler,
+		content_url: format!("/post-content/{}", post.id),
 	}
+}
+
+pub fn gallery_view(post: &Post, signer: &MediaSigner, index: usize) -> Option<GalleryView> {
+	let metadata = post.extra.get("media_metadata")?.as_object()?;
+	let images: Vec<_> = post
+		.extra
+		.get("gallery_data")?
+		.get("items")?
+		.as_array()?
+		.iter()
+		.filter_map(|item| {
+			let media_id = item.get("media_id")?.as_str()?;
+			let media = metadata.get(media_id)?;
+			let source = media.get("s")?;
+			let upstream = source
+				.get("gif")
+				.or_else(|| source.get("u"))
+				.and_then(|value| value.as_str())
+				.or_else(|| media.get("p")?.as_array()?.last()?.get("u")?.as_str())?;
+			let url = signer.rewrite_text(upstream);
+			if !url.starts_with("/media/") {
+				return None;
+			}
+			let caption = item
+				.get("caption")
+				.and_then(|value| value.as_str())
+				.map(str::trim)
+				.filter(|caption| !caption.is_empty())
+				.map(str::to_owned);
+			Some((url, caption))
+		})
+		.collect();
+	let total = images.len();
+	let (url, caption) = images.get(index)?.clone();
+	let position = index + 1;
+	Some(GalleryView {
+		image: GalleryImageView {
+			alt: caption.clone().unwrap_or_else(|| format!("Gallery image {position} of {total}")),
+			url,
+			caption,
+		},
+		position,
+		total,
+		has_previous: index > 0,
+		previous_url: format!("/gallery/{}/{}", post.id, index.saturating_sub(1)),
+		has_next: position < total,
+		next_url: format!("/gallery/{}/{position}", post.id),
+	})
+}
+
+fn is_image_post(post: &Post) -> bool {
+	if post.extra.get("post_hint").and_then(|value| value.as_str()) == Some("image") {
+		return true;
+	}
+	let decoded = if post.url.starts_with("//") { format!("https:{}", post.url) } else { post.url.clone() };
+	let Ok(url) = Url::parse(&decoded) else {
+		return false;
+	};
+	matches!(
+		url.path().rsplit('.').next().map(str::to_ascii_lowercase).as_deref(),
+		Some("avif" | "gif" | "jpeg" | "jpg" | "png" | "webp")
+	)
 }
 
 pub fn comment_tree(children: &[CommentChild], link_id: &str, sort: &str) -> Vec<CommentTreeEvent> {
@@ -399,7 +604,7 @@ pub fn loaded_comment_tree(children: &[CommentChild], parent_id: &str, link_id: 
 	tree
 }
 
-pub fn feed_controls(action: &str, active_sort: &str, active_time: &str, include_controversial: bool) -> SortControls {
+pub fn feed_controls(action: &str, active_sort: &'static str, active_time: &str, include_controversial: bool) -> SortControls {
 	let mut sorts = vec![("hot", "Hot"), ("new", "New"), ("rising", "Rising"), ("top", "Top")];
 	if include_controversial {
 		sorts.push(("controversial", "Controversial"));
@@ -408,6 +613,8 @@ pub fn feed_controls(action: &str, active_sort: &str, active_time: &str, include
 		action: action.into(),
 		label: "Post sorting",
 		choice_label: "Sort posts",
+		active_sort,
+		query: String::new(),
 		sorts: select_choices(sorts, active_sort),
 		times: if active_sort == "top" {
 			select_choices(
@@ -427,17 +634,28 @@ pub fn feed_controls(action: &str, active_sort: &str, active_time: &str, include
 	}
 }
 
-pub fn comment_sort_controls(active: &str, permalink: &str) -> SortControls {
+pub fn comment_sort_controls(active: &'static str, permalink: &str, query: &str) -> SortControls {
 	SortControls {
 		action: permalink.into(),
 		label: "Comment sorting",
 		choice_label: "Sort comments",
+		active_sort: active,
+		query: query.into(),
 		sorts: select_choices(
 			[("best", "Best"), ("top", "Top"), ("new", "New"), ("old", "Old"), ("controversial", "Controversial")],
 			active,
 		),
 		times: Vec::new(),
 	}
+}
+
+pub fn search_comment_tree(comments: &[Comment]) -> Vec<CommentTreeEvent> {
+	let mut tree = Vec::with_capacity(comments.len() * 2);
+	for comment in comments {
+		tree.push(CommentTreeEvent::Open(comment_view(comment)));
+		tree.push(CommentTreeEvent::Close);
+	}
+	tree
 }
 
 fn select_choices(values: impl IntoIterator<Item = (&'static str, &'static str)>, active: &str) -> Vec<SelectChoice> {
@@ -451,16 +669,28 @@ fn select_choices(values: impl IntoIterator<Item = (&'static str, &'static str)>
 		.collect()
 }
 
-pub fn next_url(sort: &str, time: &str, after: Option<&str>, count: u32) -> String {
-	listing_next_url("/", sort, time, after, count)
+pub fn pagination(page: u32, previous_url: String, next_url: String) -> Pagination {
+	Pagination {
+		page,
+		has_previous: !previous_url.is_empty(),
+		previous_url,
+		has_next: !next_url.is_empty(),
+		next_url,
+	}
 }
 
-pub fn subreddit_next_url(subreddit: &str, sort: &str, time: &str, after: Option<&str>, count: u32) -> String {
-	listing_next_url(&format!("/r/{subreddit}"), sort, time, after, count)
+pub fn feed_pagination(base: &str, sort: &str, time: &str, before: Option<&str>, after: Option<&str>, page: u32) -> Pagination {
+	let previous_url = if page > 1 {
+		listing_page_url(base, sort, time, "before", before, page.saturating_sub(1))
+	} else {
+		String::new()
+	};
+	let next_url = listing_page_url(base, sort, time, "after", after, page.saturating_add(1));
+	pagination(page, previous_url, next_url)
 }
 
-fn listing_next_url(base: &str, sort: &str, time: &str, after: Option<&str>, count: u32) -> String {
-	let Some(after) = after else {
+fn listing_page_url(base: &str, sort: &str, time: &str, cursor_name: &str, cursor: Option<&str>, page: u32) -> String {
+	let Some(cursor) = cursor else {
 		return String::new();
 	};
 	let mut query = form_urlencoded::Serializer::new(String::new());
@@ -470,8 +700,10 @@ fn listing_next_url(base: &str, sort: &str, time: &str, after: Option<&str>, cou
 	if sort == "top" {
 		query.append_pair("t", time);
 	}
-	query.append_pair("after", after);
-	query.append_pair("count", &count.to_string());
+	query.append_pair(cursor_name, cursor);
+	if page > 1 {
+		query.append_pair("page", &page.to_string());
+	}
 	format!("{base}?{}", query.finish())
 }
 

@@ -9,7 +9,6 @@ use neddit_api::media::MediaSigner;
 use neddit_api::server;
 use neddit_api::service::RedditService;
 use neddit_api::video::VideoResolver;
-use std::path::Path;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -75,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	println!("Starting Neddit...");
 	let signer = match matches.get_one::<String>("media-key-file") {
-		Some(path) => MediaSigner::from_secret(&read_secret(path)?)?,
+		Some(path) => MediaSigner::from_file(path)?,
 		None => {
 			warn!("No media key file configured; signed media URLs will expire when this process stops");
 			MediaSigner::random()?
@@ -96,11 +95,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	reddit.shutdown().await;
 	result?;
 	Ok(())
-}
-
-fn read_secret(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
-	let secret = std::fs::read(path)?;
-	let start = secret.iter().position(|byte| !byte.is_ascii_whitespace()).unwrap_or(secret.len());
-	let end = secret.iter().rposition(|byte| !byte.is_ascii_whitespace()).map_or(start, |index| index + 1);
-	Ok(secret[start..end].to_vec())
 }

@@ -43,7 +43,7 @@
     <section class="search-results" aria-labelledby="search-results-heading">
       <h1 id="search-results-heading">{{ result_count }} results on this page for <span class="search-term">{{ query }}</span></h1>
       {% if result_count == 0 %}
-        {% if has_next %}
+        {% if pagination.has_next %}
           <p class="comments-empty">This page has no publishable matches. Continue to inspect more candidates.</p>
         {% else %}
           <p class="comments-empty">This search has no further confirmed matches within its budget.</p>
@@ -66,16 +66,19 @@
                   {% when None %}
                 {% endmatch %}
                 <div class="metadata">
-                  {% for value in result.metadata %}<span>{{ value }}</span>{% endfor %}
+                  {% for metadata in result.metadata %}
+                    {% match metadata.href %}
+                      {% when Some with (href) %}<a href="{{ href }}">{{ metadata.text }}</a>
+                      {% when None %}<span>{{ metadata.text }}</span>
+                    {% endmatch %}
+                  {% endfor %}
                 </div>
               </article>
             </li>
           {% endfor %}
         </ol>
       {% endif %}
-      {% if has_next %}
-        <nav class="pagination" aria-label="Search pagination"><a href="{{ next_url }}">More</a></nav>
-      {% endif %}
+      {% include "partials/pagination.html" %}
     </section>
   {% else %}
     <!--<section class="search-help">

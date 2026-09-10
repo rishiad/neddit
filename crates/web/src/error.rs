@@ -13,16 +13,18 @@ pub enum AppError {
 	InvalidFeedTime,
 	#[error("invalid comment sort")]
 	InvalidCommentSort,
+	#[error("comment search must contain at most 512 characters")]
+	InvalidCommentSearch,
 	#[error("post not found")]
 	PostNotFound,
-	#[error("failed to load the Reddit feed")]
+	#[error("failed to load Reddit data")]
 	Service(#[from] ServiceError),
 }
 
 impl IntoResponse for AppError {
 	fn into_response(self) -> Response {
 		let status = match self {
-			Self::InvalidSort | Self::InvalidFeedTime | Self::InvalidCommentSort => StatusCode::BAD_REQUEST,
+			Self::InvalidSort | Self::InvalidFeedTime | Self::InvalidCommentSort | Self::InvalidCommentSearch => StatusCode::BAD_REQUEST,
 			Self::PostNotFound => StatusCode::NOT_FOUND,
 			Self::Service(_) => StatusCode::BAD_GATEWAY,
 		};

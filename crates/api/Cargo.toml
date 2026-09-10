@@ -16,6 +16,7 @@ clap = { version = "4.4.11", default-features = false, features = [
     "derive",
 ] }
 regex = "1.10.2"
+scraper = "0.25.0"
 serde = { version = "1.0.193", features = ["derive"] }
 futures-lite = "2.2.0"
 percent-encoding = "2.3.1"

@@ -34,7 +34,7 @@ const OUTPUT_TEMPLATE: &str = concat!(
 	"{\"id\":%(id)j,\"title\":%(title|null)j,\"duration\":%(duration|null)j,\"thumbnail\":%(thumbnail|null)j,\"format\":{",
 	"\"format_id\":%(format_id|null)j,\"url\":%(url|null)j,\"ext\":%(ext|null)j,\"protocol\":%(protocol|null)j,",
 	"\"width\":%(width|null)j,\"height\":%(height|null)j,\"fps\":%(fps|null)j,\"vcodec\":%(vcodec|null)j,",
-	"\"acodec\":%(acodec|null)j,\"aspect_ratio\":%(aspect_ratio|null)j}}",
+	"\"acodec\":%(acodec|null)j,\"aspect_ratio\":%(aspect_ratio|null)j,\"http_headers\":%(http_headers|null)j}}",
 );
 
 #[derive(Clone)]
@@ -80,6 +80,8 @@ struct ExtractedFormat {
 	aspect_ratio: Option<f64>,
 	vcodec: Option<String>,
 	acodec: Option<String>,
+	#[serde(default)]
+	http_headers: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -206,6 +208,10 @@ impl VideoResolver {
 		}
 	}
 
+	pub fn supports(input: &str) -> bool {
+		Url::parse(input).is_ok_and(|url| Provider::from_url(&url).is_ok())
+	}
+
 	pub async fn resolve(&self, input: &str, signer: &MediaSigner) -> Result<VideoPlayback, VideoError> {
 		let url = Url::parse(input).map_err(|_| VideoError::InvalidUrl)?;
 		let provider = Provider::from_url(&url)?;
@@ -241,6 +247,21 @@ impl VideoResolver {
 		cache.get(key).map(|entry| entry.video.clone())
 	}
 
+	pub async fn user_agent_for(&self, target: &Url) -> Option<String> {
+		let target = target.as_str();
+		self.cache.lock().await.values().find_map(|entry| {
+			entry
+				.video
+				.formats
+				.iter()
+				.find(|format| format.url.as_deref() == Some(target))?
+				.http_headers
+				.as_ref()?
+				.get("User-Agent")
+				.cloned()
+		})
+	}
+
 	async fn extract(&self, url: &str) -> Result<ExtractedVideo, VideoError> {
 		let mut command = Command::new(self.executable.as_ref());
 		command
@@ -252,10 +273,14 @@ impl VideoResolver {
 				"--no-plugin-dirs",
 				"--no-remote-components",
 				"--extractor-args",
+				"youtube:player_client=mweb",
+				"--extractor-args",
 				"youtube-ejs:jitless=true",
 				"--socket-timeout",
 				"10",
+				"--force-ipv4",
 				"--skip-download",
+				"--check-formats",
 				"--format",
 				"all[vcodec!=?none][acodec!=?none]",
 				"--print",

@@ -1,0 +1,15 @@
+<footer class="pagination-footer">
+  <nav class="pagination" aria-label="Pagination">
+    <span class="pagination-previous">
+      {% if pagination.has_previous %}
+        <a href="{{ pagination.previous_url }}" rel="prev"><span aria-hidden="true">←</span> Previous page</a>
+      {% endif %}
+    </span>
+    <span class="pagination-page" aria-current="page">Page {{ pagination.page }}</span>
+    <span class="pagination-next">
+      {% if pagination.has_next %}
+        <a href="{{ pagination.next_url }}" rel="next">Next page <span aria-hidden="true">→</span></a>
+      {% endif %}
+    </span>
+  </nav>
+</footer>

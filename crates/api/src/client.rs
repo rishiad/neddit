@@ -7,7 +7,11 @@ use futures_lite::{future::Boxed, FutureExt};
 use log::{error, info, trace};
 use percent_encoding::{percent_encode, CONTROLS};
 use serde_json::Value;
-use std::{result::Result, time::Duration};
+use std::{
+	net::{IpAddr, Ipv4Addr},
+	result::Result,
+	time::Duration,
+};
 use url::form_urlencoded;
 use wreq::redirect::Policy;
 use wreq::{header as wreq_header, Client as WreqClient, EmulationFactory, Method, Response as WreqResponse};
@@ -19,7 +23,8 @@ use self::oauth::{CredentialLease, OAuthHandle};
 
 const REDDIT_URL_BASE: &str = "https://oauth.reddit.com";
 const REDDIT_URL_BASE_HOST: &str = "oauth.reddit.com";
-const MAX_JSON_BYTES: usize = 8 * 1024 * 1024;
+const MAX_UPSTREAM_BYTES: usize = 8 * 1024 * 1024;
+const EXTERNAL_RANGE_CHUNK: u64 = 8 * 1024 * 1024;
 
 const REDDIT_SHORT_URL_BASE: &str = "https://redd.it";
 const REDDIT_SHORT_URL_BASE_HOST: &str = "redd.it";
@@ -177,11 +182,39 @@ impl RedditClient {
 	}
 
 	pub async fn proxy(&self, url: String, request_headers: &HeaderMap) -> Result<Response, ClientError> {
+		let credentials = self.oauth.current();
+		self.proxy_with(&self.http, url, request_headers, Some(credentials.user_agent())).await
+	}
+
+	pub async fn proxy_external(&self, url: String, request_headers: &HeaderMap, user_agent: Option<&str>) -> Result<Response, ClientError> {
+		let uri = wreq::Uri::try_from(&url).map_err(|_| ClientError::InvalidProxyUrl { url: url.clone() })?;
+		let mut builder = self.http.get(uri).local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+		for &key in &["Range", "If-Modified-Since", "Cache-Control"] {
+			if let Some(value) = request_headers.get(key) {
+				let value = if key == "Range" {
+					bounded_range(value.to_str().ok()).unwrap_or_else(|| value.as_bytes().to_vec())
+				} else {
+					value.as_bytes().to_vec()
+				};
+				builder = builder.header(key, value);
+			}
+		}
+		if let Some(user_agent) = user_agent {
+			builder = builder.header("User-Agent", user_agent);
+		}
+		let response = builder
+			.header(wreq_header::ACCEPT, "*/*")
+			.send()
+			.await
+			.map_err(|source| ClientError::Request { url, source })?;
+		response.into_http_response()
+	}
+
+	async fn proxy_with(&self, client: &WreqClient, url: String, request_headers: &HeaderMap, user_agent: Option<&str>) -> Result<Response, ClientError> {
 		// First parameter is target URL (mandatory).
 		let wreq_uri = wreq::Uri::try_from(&url).map_err(|_| ClientError::InvalidProxyUrl { url: url.clone() })?;
 
-		let mut builder = self.http.get(wreq_uri);
-
+		let mut builder = client.get(wreq_uri);
 		// Copy useful headers from original request
 		for &key in &["Range", "If-Modified-Since", "Cache-Control"] {
 			if let Some(value) = request_headers.get(key) {
@@ -189,11 +222,11 @@ impl RedditClient {
 			}
 		}
 
-		// Add User-Agent header of the currently spoofed device
-		let credentials = self.oauth.current();
-		builder = builder.header("User-Agent", credentials.user_agent());
+		if let Some(user_agent) = user_agent {
+			builder = builder.header("User-Agent", user_agent);
+		}
 
-		// This is needed or Reddit will redirect us to a /media landing page that just renders the image.
+		// Request the media body rather than a provider landing page.
 		builder = builder.header(wreq_header::ACCEPT, "*/*");
 
 		let response = builder.send().await.map_err(|source| ClientError::Request { url, source })?;
@@ -204,6 +237,10 @@ impl RedditClient {
 	/// 3xx codes Reddit returns and will automatically redirect.
 	fn reddit_get(&self, path: String, access: Access) -> Boxed<Result<UpstreamResponse, ClientError>> {
 		self.request(&Method::GET, with_raw_json(path), true, access, REDDIT_URL_BASE, REDDIT_URL_BASE_HOST)
+	}
+
+	fn reddit_html_get(&self, path: String, access: Access) -> Boxed<Result<UpstreamResponse, ClientError>> {
+		self.request(&Method::GET, path, false, access, ALTERNATIVE_REDDIT_URL_BASE, ALTERNATIVE_REDDIT_URL_BASE_HOST)
 	}
 
 	/// Makes a HEAD request to Reddit at `path, using the short URL base. This will not follow redirects.
@@ -273,6 +310,37 @@ impl RedditClient {
 		.boxed()
 	}
 
+	/// Make a bounded request to a Reddit WWW endpoint and return its HTML.
+	pub async fn html(&self, path: String, access: Access) -> Result<String, ClientError> {
+		let UpstreamResponse {
+			mut response,
+			lease,
+			rate_limit_reset,
+		} = self.reddit_html_get(path.clone(), access).await?;
+		let generation = lease.generation();
+		let status = response.status();
+		if response.content_length().is_some_and(|n| n > MAX_UPSTREAM_BYTES as u64) {
+			return Err(ClientError::BodyTooLarge);
+		}
+		let mut body = Vec::new();
+		while let Some(chunk) = response.chunk().await.map_err(|source| ClientError::Body { path: path.clone(), source })? {
+			append_body_chunk(&mut body, &chunk)?;
+		}
+		drop(lease);
+		if status.as_u16() == 429 || body.is_empty() {
+			self.oauth.invalidate(generation).await;
+			return Err(ClientError::RateLimited { reset: rate_limit_reset });
+		}
+		if status.as_u16() == 401 {
+			self.oauth.invalidate(generation).await;
+			return Err(ClientError::Unauthorized);
+		}
+		if !status.is_success() {
+			return Err(ClientError::UnexpectedStatus { path, status: status.as_u16() });
+		}
+		Ok(String::from_utf8_lossy(&body).into_owned())
+	}
+
 	/// Make a request to a Reddit API and parse the JSON response.
 	pub async fn json(&self, path: String, access: Access) -> Result<Value, ClientError> {
 		let UpstreamResponse {
@@ -282,12 +350,12 @@ impl RedditClient {
 		} = self.reddit_get(path.clone(), access).await?;
 		let generation = lease.generation();
 		let status = response.status();
-		if response.content_length().is_some_and(|n| n > MAX_JSON_BYTES as u64) {
+		if response.content_length().is_some_and(|n| n > MAX_UPSTREAM_BYTES as u64) {
 			return Err(ClientError::BodyTooLarge);
 		}
 		let mut body = Vec::new();
 		while let Some(chunk) = response.chunk().await.map_err(|source| ClientError::Body { path: path.clone(), source })? {
-			append_json_chunk(&mut body, &chunk)?;
+			append_body_chunk(&mut body, &chunk)?;
 		}
 		drop(lease);
 
@@ -362,6 +430,17 @@ impl RedditClient {
 	}
 }
 
+fn bounded_range(value: Option<&str>) -> Option<Vec<u8>> {
+	let value = value?.strip_prefix("bytes=")?;
+	let start = value.strip_suffix('-')?;
+	if start.is_empty() || start.contains(',') {
+		return None;
+	}
+	let start: u64 = start.parse().ok()?;
+	let end = start.saturating_add(EXTERNAL_RANGE_CHUNK - 1);
+	Some(format!("bytes={start}-{end}").into_bytes())
+}
+
 fn parse_rate_limit_remaining(value: &str) -> Option<u16> {
 	let value = value.parse::<f64>().ok()?.floor();
 	if !value.is_finite() || value < 0.0 {
@@ -370,8 +449,8 @@ fn parse_rate_limit_remaining(value: &str) -> Option<u16> {
 	Some(value.min(f64::from(u16::MAX)) as u16)
 }
 
-fn append_json_chunk(body: &mut Vec<u8>, chunk: &[u8]) -> Result<(), ClientError> {
-	if chunk.len() > MAX_JSON_BYTES.saturating_sub(body.len()) {
+fn append_body_chunk(body: &mut Vec<u8>, chunk: &[u8]) -> Result<(), ClientError> {
+	if chunk.len() > MAX_UPSTREAM_BYTES.saturating_sub(body.len()) {
 		return Err(ClientError::BodyTooLarge);
 	}
 	body.extend_from_slice(chunk);

@@ -1,0 +1,20 @@
+<div class="post-content">
+  {% match post.gallery %}
+    {% when Some with (gallery) %}{% include "partials/gallery.html" %}
+    {% when None %}
+  {% endmatch %}
+  {% match post.image_url %}
+    {% when Some with (image_url) %}
+      <a class="post-media-link" href="{{ image_url }}">
+        <img class="post-media" src="{{ image_url }}" alt="" decoding="async">
+      </a>
+    {% when None %}
+  {% endmatch %}
+  {% match post.item.video %}
+    {% when Some with (video) %}{% include "partials/video.html" %}
+    {% when None %}
+  {% endmatch %}
+  {% if post.show_selftext %}
+    <div class="post-copy">{{ post.selftext }}</div>
+  {% endif %}
+</div>

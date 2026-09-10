@@ -4,16 +4,18 @@ use axum::{
 };
 use neddit_api::{
 	client::Access,
+	media::MediaSigner,
 	models::PostComments,
-	service::{CommentQuery, CommentSort, ListingQuery, ListingTime, MoreChildrenQuery, PostSort, RedditService, WikiPageQuery},
+	server::MediaProxy,
+	service::{CommentQuery, CommentSort, ListingQuery, ListingTime, MoreChildrenQuery, PostSort, RedditService, ThreadCommentSearchQuery, WikiPageQuery},
 };
 use serde::Deserialize;
 
 use crate::{
 	error::AppError,
 	view::{
-		comment_sort_controls, comment_tree, community_view, feed_controls, feed_item, loaded_comment_tree, next_url, post_view, subreddit_next_url, wiki_view, FeedTemplate,
-		MoreCommentsTemplate, PostTemplate, SubredditTemplate, WikiTemplate,
+		comment_sort_controls, comment_tree, community_view, feed_controls, feed_item, feed_pagination, gallery_view, loaded_comment_tree, post_view, search_comment_tree,
+		wiki_view, FeedTemplate, GalleryTemplate, MoreCommentsTemplate, PostContentTemplate, PostTemplate, SubredditTemplate, VideoPlayerTemplate, WikiTemplate,
 	},
 };
 
@@ -25,12 +27,14 @@ pub struct FeedQuery {
 	sort: Option<String>,
 	t: Option<String>,
 	after: Option<String>,
-	count: Option<u32>,
+	before: Option<String>,
+	page: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct PostQuery {
 	sort: Option<String>,
+	q: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -39,6 +43,11 @@ pub struct MoreCommentsQuery {
 	link_id: String,
 	parent_id: String,
 	sort: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct VideoPlayerQuery {
+	url: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -50,12 +59,14 @@ pub struct WikiQuery {
 pub async fn front_page(State(service): State<RedditService>, Query(query): Query<FeedQuery>) -> Result<FeedTemplate, AppError> {
 	let (sort, sort_name) = parse_sort(query.sort.as_deref())?;
 	let (time, time_name) = parse_feed_time(sort, query.t.as_deref())?;
-	let count = query.count.unwrap_or(0);
+	let page = query.page.unwrap_or(1).max(1);
+	let count = listing_count(page, query.before.is_some());
 	let listing = service
 		.front_page_posts(
 			sort,
 			&ListingQuery {
 				after: query.after,
+				before: query.before,
 				count: Some(count),
 				limit: Some(PAGE_SIZE),
 				time,
@@ -64,14 +75,18 @@ pub async fn front_page(State(service): State<RedditService>, Query(query): Quer
 			Access::Standard,
 		)
 		.await?;
+	let before = listing
+		.data
+		.before
+		.as_deref()
+		.or_else(|| listing.data.children.first().map(|thing| thing.data.name.as_str()));
+	let pagination = feed_pagination("/", sort_name, time_name, before, listing.data.after.as_deref(), page);
 	let items = listing.data.children.iter().map(|thing| feed_item(&thing.data)).collect();
-	let next_url = next_url(sort_name, time_name, listing.data.after.as_deref(), count.saturating_add(u32::from(PAGE_SIZE)));
 
 	Ok(FeedTemplate {
 		items,
 		controls: feed_controls("/", sort_name, time_name, false),
-		has_next: !next_url.is_empty(),
-		next_url,
+		pagination,
 		feed_label: "Front page posts".into(),
 	})
 }
@@ -79,9 +94,11 @@ pub async fn front_page(State(service): State<RedditService>, Query(query): Quer
 pub async fn subreddit_feed(State(service): State<RedditService>, Path(subreddit): Path<String>, Query(query): Query<FeedQuery>) -> Result<SubredditTemplate, AppError> {
 	let (sort, sort_name) = parse_subreddit_sort(query.sort.as_deref())?;
 	let (time, time_name) = parse_feed_time(sort, query.t.as_deref())?;
-	let count = query.count.unwrap_or(0);
+	let page = query.page.unwrap_or(1).max(1);
+	let count = listing_count(page, query.before.is_some());
 	let listing_query = ListingQuery {
 		after: query.after,
+		before: query.before,
 		count: Some(count),
 		limit: Some(PAGE_SIZE),
 		time,
@@ -91,17 +108,26 @@ pub async fn subreddit_feed(State(service): State<RedditService>, Path(subreddit
 		service.subreddit_posts(&subreddit, sort, &listing_query, Access::Standard),
 		service.subreddit_about(&subreddit, Access::Standard),
 	)?;
+	let before = listing
+		.data
+		.before
+		.as_deref()
+		.or_else(|| listing.data.children.first().map(|thing| thing.data.name.as_str()));
+	let pagination = feed_pagination(&format!("/r/{subreddit}"), sort_name, time_name, before, listing.data.after.as_deref(), page);
 	let items = listing.data.children.iter().map(|thing| feed_item(&thing.data)).collect();
-	let next_url = subreddit_next_url(&subreddit, sort_name, time_name, listing.data.after.as_deref(), count.saturating_add(u32::from(PAGE_SIZE)));
 
 	Ok(SubredditTemplate {
 		community: community_view(&community.data),
 		items,
 		controls: feed_controls(&format!("/r/{subreddit}"), sort_name, time_name, true),
-		has_next: !next_url.is_empty(),
-		next_url,
+		pagination,
 		feed_label: format!("r/{subreddit} posts"),
 	})
+}
+
+fn listing_count(page: u32, before: bool) -> u32 {
+	let traversed_pages = if before { page } else { page.saturating_sub(1) };
+	traversed_pages.saturating_mul(u32::from(PAGE_SIZE))
 }
 
 pub async fn wiki_root(Path(subreddit): Path<String>) -> Redirect {
@@ -126,48 +152,58 @@ pub async fn wiki_page(
 	})
 }
 
-pub async fn post_comments(State(service): State<RedditService>, Path(article): Path<String>, Query(query): Query<PostQuery>) -> Result<PostTemplate, AppError> {
-	post_page(service, None, article, None, query).await
+pub async fn post_comments(
+	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
+	Path(article): Path<String>,
+	Query(query): Query<PostQuery>,
+) -> Result<PostTemplate, AppError> {
+	post_page(service, signer, None, article, None, query).await
 }
 
 pub async fn subreddit_post_comments(
 	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
 	Path((subreddit, article)): Path<(String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, Some(subreddit), article, None, query).await
+	post_page(service, signer, Some(subreddit), article, None, query).await
 }
 
 pub async fn post_permalink(
 	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
 	Path((article, _slug)): Path<(String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, None, article, None, query).await
+	post_page(service, signer, None, article, None, query).await
 }
 
 pub async fn post_comment_permalink(
 	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
 	Path((article, _slug, comment)): Path<(String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, None, article, Some(comment), query).await
+	post_page(service, signer, None, article, Some(comment), query).await
 }
 
 pub async fn subreddit_post_permalink(
 	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
 	Path((subreddit, article, _slug)): Path<(String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, Some(subreddit), article, None, query).await
+	post_page(service, signer, Some(subreddit), article, None, query).await
 }
 
 pub async fn subreddit_post_comment_permalink(
 	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
 	Path((subreddit, article, _slug, comment)): Path<(String, String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, Some(subreddit), article, Some(comment), query).await
+	post_page(service, signer, Some(subreddit), article, Some(comment), query).await
 }
 
 pub async fn more_comments(State(service): State<RedditService>, Query(query): Query<MoreCommentsQuery>) -> Result<MoreCommentsTemplate, AppError> {
@@ -196,26 +232,101 @@ pub async fn more_comments(State(service): State<RedditService>, Query(query): Q
 	})
 }
 
-async fn post_page(service: RedditService, subreddit: Option<String>, article: String, comment: Option<String>, query: PostQuery) -> Result<PostTemplate, AppError> {
+pub async fn video_player(State(media): State<MediaProxy>, Query(query): Query<VideoPlayerQuery>) -> Result<VideoPlayerTemplate, neddit_api::video::VideoError> {
+	Ok(VideoPlayerTemplate {
+		playback: media.resolve_video(&query.url).await?,
+	})
+}
+
+pub async fn gallery(
+	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
+	Path((article, index)): Path<(String, usize)>,
+) -> Result<GalleryTemplate, AppError> {
+	let post = service
+		.posts_by_id(&format!("t3_{article}"), Access::Standard)
+		.await?
+		.data
+		.children
+		.into_iter()
+		.next()
+		.ok_or(AppError::PostNotFound)?
+		.data;
+	Ok(GalleryTemplate {
+		gallery: gallery_view(&post, &signer, index).ok_or(AppError::PostNotFound)?,
+	})
+}
+
+pub async fn post_content(State(service): State<RedditService>, State(signer): State<MediaSigner>, Path(article): Path<String>) -> Result<PostContentTemplate, AppError> {
+	let post = service
+		.posts_by_id(&format!("t3_{article}"), Access::Standard)
+		.await?
+		.data
+		.children
+		.into_iter()
+		.next()
+		.ok_or(AppError::PostNotFound)?
+		.data;
+	let mut post = post_view(&post, &signer);
+	post.hide_content = false;
+	Ok(PostContentTemplate { post })
+}
+
+async fn post_page(
+	service: RedditService,
+	signer: MediaSigner,
+	subreddit: Option<String>,
+	article: String,
+	comment: Option<String>,
+	query: PostQuery,
+) -> Result<PostTemplate, AppError> {
 	let (sort, sort_name) = parse_comment_sort(query.sort.as_deref())?;
-	let query = CommentQuery {
+	let search = query.q.map(|value| value.trim().to_owned()).filter(|value| !value.is_empty());
+	if search.as_ref().is_some_and(|value| value.chars().count() > 512) {
+		return Err(AppError::InvalidCommentSearch);
+	}
+	let comment_query = CommentQuery {
 		comment,
 		sort: Some(sort),
 		..CommentQuery::default()
 	};
-	let PostComments(posts, comments) = match subreddit {
-		Some(subreddit) => service.subreddit_post_comments(&subreddit, &article, &query, Access::Standard).await?,
-		None => service.post_comments(&article, &query, Access::Standard).await?,
+	let (post, comment_tree, result_count) = if let Some(search) = &search {
+		let post = service
+			.posts_by_id(&format!("t3_{article}"), Access::Standard)
+			.await?
+			.data
+			.children
+			.into_iter()
+			.next()
+			.ok_or(AppError::PostNotFound)?
+			.data;
+		let comments = service
+			.search_post_comments(&post.subreddit, &article, &ThreadCommentSearchQuery { query: search.clone(), sort }, Access::Standard)
+			.await?;
+		let count = comments.len();
+		(post, search_comment_tree(&comments), count)
+	} else {
+		let PostComments(posts, comments) = match subreddit {
+			Some(subreddit) => service.subreddit_post_comments(&subreddit, &article, &comment_query, Access::Standard).await?,
+			None => service.post_comments(&article, &comment_query, Access::Standard).await?,
+		};
+		let post = posts.data.children.into_iter().next().ok_or(AppError::PostNotFound)?.data;
+		let link_id = post.name.clone();
+		let tree = comment_tree(&comments.data.children, &link_id, sort_name);
+		(post, tree, 0)
 	};
-	let post = posts.data.children.into_iter().next().ok_or(AppError::PostNotFound)?.data;
 	let comment_count = post.num_comments;
-	let link_id = post.name.clone();
-	let post = post_view(&post);
-	let comment_tree = comment_tree(&comments.data.children, &link_id, sort_name);
+	let post = post_view(&post, &signer);
+	let search_query = search.as_deref().unwrap_or_default();
 
 	Ok(PostTemplate {
-		controls: comment_sort_controls(sort_name, &post.item.permalink),
-		comments_heading: format!("{} comment{}", post.item.comments, if comment_count == 1 { "" } else { "s" }),
+		controls: comment_sort_controls(sort_name, &post.item.permalink, search_query),
+		comments_heading: if search.is_some() {
+			format!("{result_count} matching comment{}", if result_count == 1 { "" } else { "s" })
+		} else {
+			format!("{} comment{}", post.item.comments, if comment_count == 1 { "" } else { "s" })
+		},
+		empty_message: if search.is_some() { "No comments matched." } else { "No comments yet." },
 		has_comments: !comment_tree.is_empty(),
 		post,
 		comment_tree,

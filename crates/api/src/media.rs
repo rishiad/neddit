@@ -3,7 +3,10 @@ use hmac::{Hmac, Mac};
 use regex::Regex;
 use serde_json::Value;
 use sha2::Sha256;
-use std::sync::{Arc, LazyLock};
+use std::{
+	path::Path,
+	sync::{Arc, LazyLock},
+};
 use thiserror::Error;
 use url::Url;
 
@@ -32,6 +35,13 @@ impl MediaSigner {
 			return Err(MediaUrlError::ShortSecret);
 		}
 		Ok(Self { key: Arc::from(secret) })
+	}
+
+	pub fn from_file(path: impl AsRef<Path>) -> Result<Self, MediaSignerLoadError> {
+		let secret = std::fs::read(path)?;
+		let start = secret.iter().position(|byte| !byte.is_ascii_whitespace()).unwrap_or(secret.len());
+		let end = secret.iter().rposition(|byte| !byte.is_ascii_whitespace()).map_or(start, |index| index + 1);
+		Self::from_secret(&secret[start..end]).map_err(MediaSignerLoadError::from)
 	}
 
 	pub fn rewrite_value(&self, value: &mut Value) {
@@ -310,5 +320,13 @@ pub enum MediaUrlError {
 	ForbiddenTarget,
 	#[error("invalid URL in Reddit media manifest")]
 	InvalidManifestUrl,
+}
+
+#[derive(Debug, Error)]
+pub enum MediaSignerLoadError {
+	#[error("failed to read the media signing secret")]
+	Read(#[from] std::io::Error),
+	#[error(transparent)]
+	InvalidSecret(#[from] MediaUrlError),
 }
 

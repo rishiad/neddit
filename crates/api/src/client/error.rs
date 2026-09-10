@@ -2,8 +2,10 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ClientError {
-	#[error("upstream JSON exceeds the 8 MiB response limit")]
+	#[error("upstream response exceeds the 8 MiB response limit")]
 	BodyTooLarge,
+	#[error("Reddit returned unexpected HTTP status {status} for `{path}`")]
+	UnexpectedStatus { path: String, status: u16 },
 	#[error("Reddit returned an unexpected HTTP status or JSON error envelope")]
 	InvalidEnvelope,
 	#[error("failed to build Reddit HTTP client")]

@@ -1,8 +1,9 @@
-use crate::view::{search_choices, search_result, SearchTemplate, SelectChoice};
+use crate::view::{pagination, search_choices, search_result, SearchTemplate, SelectChoice};
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Query, State};
 use neddit_api::{
+	media::MediaSigner,
 	search::Request,
 	service::{ListingTime, RedditService},
 };
@@ -52,7 +53,7 @@ fn excerpt(source: &str, start: usize, end: usize) -> (String, String, String) {
 	}
 }
 
-pub async fn page(State(service): State<RedditService>, Query(request): Query<Request>) -> SearchTemplate {
+pub async fn page(State(service): State<RedditService>, State(signer): State<MediaSigner>, Query(request): Query<Request>) -> SearchTemplate {
 	let kind = request.kind.as_str();
 	let mut view = form(&request);
 	if request.q.trim().is_empty() {
@@ -60,26 +61,12 @@ pub async fn page(State(service): State<RedditService>, Query(request): Query<Re
 	}
 	match service.search_ql(&request).await {
 		Ok(page) => {
-			view.results = page.items.iter().filter_map(search_result).collect();
+			view.results = page.items.iter().filter_map(|item| search_result(item, &signer)).collect();
 			view.result_count = view.results.len();
 			view.searched = true;
-			if let Some(cursor) = page.cursor {
-				let mut params = form_urlencoded::Serializer::new(String::new());
-				params
-					.append_pair("q", &request.q)
-					.append_pair("kind", kind)
-					.append_pair("limit", &request.limit().to_string())
-					.append_pair("include_nsfw", if request.include_nsfw { "true" } else { "false" })
-					.append_pair("cursor", &cursor);
-				if let Some(sort) = &request.sort {
-					params.append_pair("sort", sort);
-				}
-				if request.sort() == "top" {
-					params.append_pair("t", request.top_time().as_str());
-				}
-				view.next_url = format!("/search?{}", params.finish());
-				view.has_next = true;
-			}
+			let previous_url = page.previous_cursor.as_deref().map(|cursor| search_page_url(&request, kind, cursor)).unwrap_or_default();
+			let next_url = page.cursor.as_deref().map(|cursor| search_page_url(&request, kind, cursor)).unwrap_or_default();
+			view.pagination = pagination(page.number, previous_url, next_url);
 		}
 		Err(error) => {
 			view.diagnostic = error.to_string();
@@ -87,6 +74,23 @@ pub async fn page(State(service): State<RedditService>, Query(request): Query<Re
 		}
 	}
 	view
+}
+
+fn search_page_url(request: &Request, kind: &str, cursor: &str) -> String {
+	let mut params = form_urlencoded::Serializer::new(String::new());
+	params
+		.append_pair("q", &request.q)
+		.append_pair("kind", kind)
+		.append_pair("limit", &request.limit().to_string())
+		.append_pair("include_nsfw", if request.include_nsfw { "true" } else { "false" })
+		.append_pair("cursor", cursor);
+	if let Some(sort) = &request.sort {
+		params.append_pair("sort", sort);
+	}
+	if request.sort() == "top" {
+		params.append_pair("t", request.top_time().as_str());
+	}
+	format!("/search?{}", params.finish())
 }
 
 fn form(request: &Request) -> SearchTemplate {
@@ -101,8 +105,7 @@ fn form(request: &Request) -> SearchTemplate {
 		results: Vec::new(),
 		result_count: 0,
 		searched: false,
-		next_url: String::new(),
-		has_next: false,
+		pagination: pagination(1, String::new(), String::new()),
 		diagnostic: String::new(),
 		error_prefix: String::new(),
 		error_text: String::new(),

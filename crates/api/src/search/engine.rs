@@ -47,6 +47,10 @@ impl Request {
 #[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
 pub struct Page {
 	pub items: Vec<PublicThing>,
+	/// One-based page number within the retained search session.
+	pub number: u32,
+	/// Cursor for the preceding immutable page.
+	pub previous_cursor: Option<String>,
 	pub cursor: Option<String>,
 	pub ranking: String,
 	/// Buffered results, possible further discovery, source exhaustion, or a terminal stop.

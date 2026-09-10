@@ -18,5 +18,6 @@ pub mod client;
 pub mod media;
 pub mod models;
 pub mod parsing;
+pub mod search;
 pub mod server;
 pub mod service;

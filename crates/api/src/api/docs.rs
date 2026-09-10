@@ -23,6 +23,7 @@ pub(super) const WIKI: &str = "See the [Reddit wiki documentation](https://www.r
 #[openapi(
 	info(description = "Private Reddit-compatible read API proxy. Reddit-owned links and media URLs resolve through this service. Every JSON API route also accepts a final .json suffix. Common default-listing and permalink aliases are accepted but omitted here."),
 	paths(
+		crate::api::ql_search,
 		crate::api::routes::wiki_page,
 		crate::api::routes::wiki_page_revisions,
 		crate::api::routes::wiki_discussions
@@ -47,3 +48,4 @@ pub(super) fn finish(router: OpenApiRouter<RedditService>, service: RedditServic
 		}),
 	)
 }
+

@@ -2,6 +2,7 @@
 
 mod app;
 mod error;
+mod search;
 mod view;
 
 use axum::{
@@ -26,7 +27,7 @@ const CONTENT_SECURITY_POLICY: &str =
 pub fn router(service: RedditService) -> Router {
 	let app = Router::new()
 		.route("/", get(app::front_page))
-		.route("/search", get(app::search_page))
+		.route("/search", get(search::page))
 		.route("/more-comments", get(app::more_comments))
 		.route("/r/{subreddit}", get(app::subreddit_feed))
 		.route("/r/{subreddit}/wiki", get(app::wiki_root))
@@ -51,7 +52,10 @@ pub fn router(service: RedditService) -> Router {
 }
 
 fn system_routes() -> Router {
-	Router::new().route("/healthz", get(health)).route("/assets/app.css", get(stylesheet))
+	Router::new()
+		.route("/healthz", get(health))
+		.route("/assets/app.css", get(stylesheet))
+		.route("/search/controls", get(search::controls))
 }
 
 async fn health() -> StatusCode {

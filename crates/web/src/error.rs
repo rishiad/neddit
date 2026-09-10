@@ -11,8 +11,6 @@ pub enum AppError {
 	InvalidSort,
 	#[error("invalid comment sort")]
 	InvalidCommentSort,
-	#[error("invalid search controls")]
-	InvalidSearch,
 	#[error("post not found")]
 	PostNotFound,
 	#[error("failed to load the Reddit feed")]
@@ -22,7 +20,7 @@ pub enum AppError {
 impl IntoResponse for AppError {
 	fn into_response(self) -> Response {
 		let status = match self {
-			Self::InvalidSort | Self::InvalidCommentSort | Self::InvalidSearch => StatusCode::BAD_REQUEST,
+			Self::InvalidSort | Self::InvalidCommentSort => StatusCode::BAD_REQUEST,
 			Self::PostNotFound => StatusCode::NOT_FOUND,
 			Self::Service(_) => StatusCode::BAD_GATEWAY,
 		};

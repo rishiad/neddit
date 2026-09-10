@@ -15,6 +15,7 @@ use uuid::Uuid;
 pub struct RedditService {
 	pub(super) client: RedditClient,
 	pub(super) more_children_gate: Arc<Semaphore>,
+	pub(crate) search_sessions: Arc<crate::search::Sessions>,
 }
 
 impl RedditService {
@@ -22,11 +23,20 @@ impl RedditService {
 		Self {
 			client,
 			more_children_gate: Arc::new(Semaphore::new(1)),
+			search_sessions: Arc::new(crate::search::Sessions::default()),
 		}
 	}
 
 	pub async fn front_page_posts(&self, sort: PostSort, query: &ListingQuery, access: Access) -> Result<Listing<Thing<Post>>, ServiceError> {
 		self.post_listing(None, sort, query, access).await
+	}
+
+	pub(crate) async fn recent_ql_comments(&self, community: &str, query: &ListingQuery) -> Result<Listing<crate::models::PublicThing>, ServiceError> {
+		validate_subreddit(community)?;
+		validate_listing_query(query)?;
+		let path = with_query(format!("/r/{community}/comments"), encode_listing_query(query, None));
+		let json = self.client.json(path, Access::Standard).await?;
+		Ok(crate::parsing::public::parse_user_comment_listing(&json)?)
 	}
 
 	pub async fn subreddit_posts(&self, subreddit: &str, sort: PostSort, query: &ListingQuery, access: Access) -> Result<Listing<Thing<Post>>, ServiceError> {

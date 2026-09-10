@@ -6,13 +6,15 @@
   <form class="search-form" action="/search" method="get">
     <div class="search-query">
       <label class="visually-hidden" for="search-q">Search query</label>
-      <input id="search-q" name="q" type="search" value="{{ query }}" maxlength="512" autocapitalize="off" autofocus required>
+      <input id="search-q" name="q" type="search" value="{{ query }}" maxlength="4096" aria-describedby="ql-help" autocapitalize="off" autofocus required>
       <button type="submit">Search</button>
     </div>
 
     <div class="search-primary-controls">
-      <fieldset>
-        <legend>Search</legend>
+      <fieldset hx-get="/search/controls" hx-trigger="change" hx-target="#search-sort-controls"
+                hx-swap="outerHTML" hx-include="[name='kind'], [name='sort']" hx-sync="this:replace"
+                hx-disabled-elt=".search-query button">
+        <legend>Search:</legend>
         <div class="search-choices">
           {% for choice in kinds %}
             <label><input type="radio" name="kind" value="{{ choice.value }}"{% if choice.checked %} checked{% endif %}> {{ choice.label }}</label>
@@ -20,48 +22,36 @@
         </div>
       </fieldset>
 
-      <fieldset>
-        <legend>Order by</legend>
-        <div class="search-choices">
-          {% for choice in sorts %}
-            <label><input type="radio" name="sort" value="{{ choice.value }}"{% if choice.checked %} checked{% endif %}> {{ choice.label }}</label>
-          {% endfor %}
-        </div>
-      </fieldset>
+      {% include "search_sorts.html" %}
     </div>
 
-    <details class="search-advanced"{% if advanced_open %} open{% endif %}>
-      <summary>Advanced filters</summary>
-      <div class="search-advanced-grid">
-        <label>
-          <span>Within community <small>(posts only)</small></span>
-          <span class="search-community-prefix">r/ <input name="community" value="{{ community }}" autocapitalize="off" spellcheck="false"></span>
-        </label>
-        <label>
-          <span>Time range</span>
-          <select name="time">
-            {% for choice in times %}<option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
-          </select>
-        </label>
-        <label>
-          <span>Results per page</span>
-          <select name="limit">
-            {% for choice in limits %}<option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
-          </select>
-        </label>
-      </div>
-    </details>
+    <label>Results per page
+      <select name="limit">
+        {% for choice in limits %}<option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
+      </select>
+    </label>
   </form>
+
+  {% if !diagnostic.is_empty() %}
+    <p role="alert">{{ diagnostic }}</p>
+    <p>Submitted query: <code class="search-diagnostic">{{ error_prefix }}<mark>{{ error_text }}</mark>{{ error_suffix }}</code></p>
+  {% endif %}
 
   {% if searched %}
     <section class="search-results" aria-labelledby="search-results-heading">
       <h1 id="search-results-heading">{{ result_count }} results on this page for <span class="search-term">{{ query }}</span></h1>
+      <p>Order: {{ ranking }}. Continuation: {{ continuation }}.</p>
+      <details><summary>Coverage limits</summary><ul>{% for notice in coverage %}<li>{{ notice }}</li>{% endfor %}</ul></details>
       {% if result_count == 0 %}
-        <p class="comments-empty">No results matched these filters.</p>
+        {% if has_next %}
+          <p class="comments-empty">This page has no publishable matches. Continue to inspect more candidates.</p>
+        {% else %}
+          <p class="comments-empty">This search has no further confirmed matches within its budget.</p>
+        {% endif %}
       {% else %}
         <ol class="feed" aria-label="Search results">
           {% for result in results %}
-            <li class="story search-result">
+            <li class="story search-result" data-fullname="{{ result.fullname }}">
               <div class="score" aria-label="{{ result.metric }} {{ result.metric_label }}">{{ result.metric }}</div>
               <article class="story-body">
                 <div class="title-line">
@@ -88,13 +78,13 @@
       {% endif %}
     </section>
   {% else %}
-    <section class="search-help">
+    <!--<section class="search-help">
       <h1>Search Reddit</h1>
       <ul>
         <li>Use quotation marks for an exact phrase.</li>
-        <li>Choose a community to search only its posts.</li>
-        <li>Use the time range with Top or Comments to narrow broad searches.</li>
+        <li>Use <code>subreddit:(rust OR programming)</code> to select communities.</li>
+        <li>Dates belong inside each branch: <code>(subreddit:rust past:7d) OR (subreddit:programming past:30d)</code>.</li>
       </ul>
-    </section>
+    </section>-->
   {% endif %}
 {% endblock %}

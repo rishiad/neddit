@@ -8,7 +8,8 @@ pub fn parse_listing<T>(json: &Value) -> Result<Listing<T>, ParseError>
 where
 	T: DeserializeOwned,
 {
-	let listing = Listing::<T>::deserialize(json).map_err(|source| ParseError::InvalidPayload { entity: "listing", source })?;
+	let listing =
+		Listing::<T>::deserialize(json).map_err(|source| ParseError::InvalidPayload { entity: "listing", source })?;
 	validate_listing_kind(&listing, "listing")?;
 	Ok(listing)
 }

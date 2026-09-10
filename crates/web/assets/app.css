@@ -737,8 +737,7 @@ a:focus-visible {
 
 .search-query input,
 .search-query button,
-.search-advanced input,
-.search-advanced select {
+.search-form select {
   min-height: 2rem;
   border: 1px solid rgb(51 51 51 / 35%);
   border-radius: 2px;
@@ -748,8 +747,7 @@ a:focus-visible {
 }
 
 .search-query input,
-.search-advanced input,
-.search-advanced select {
+.search-form select {
   padding: 0.25em 0.4em;
 }
 
@@ -761,9 +759,9 @@ a:focus-visible {
 
 .search-primary-controls {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75em 1.5em;
-  margin-top: 1em;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.5em;
+  margin: 1em 0;
 }
 
 .search-primary-controls fieldset {
@@ -774,8 +772,24 @@ a:focus-visible {
 }
 
 .search-primary-controls legend {
-  margin-bottom: 0.25em;
+  float: left;
+  width: 6rem;
+  margin: 0;
+  padding: 0;
   font-weight: bold;
+}
+
+.search-primary-controls .search-choices {
+  margin-inline-start: 6rem;
+}
+
+.search-diagnostic {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.search-diagnostic mark:empty::after {
+  content: "▏";
 }
 
 .search-choices {
@@ -786,42 +800,6 @@ a:focus-visible {
 
 .search-choices label {
   white-space: nowrap;
-}
-
-.search-advanced {
-  margin-top: 1em;
-  padding: 0.5em 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-}
-
-.search-advanced summary {
-  cursor: pointer;
-  font-weight: bold;
-}
-
-.search-advanced-grid {
-  display: grid;
-  grid-template-columns: minmax(12rem, 1fr) repeat(2, max-content);
-  align-items: end;
-  gap: 1em;
-  margin-top: 0.75em;
-}
-
-.search-advanced-grid > label {
-  display: grid;
-  gap: 0.2em;
-}
-
-.search-advanced-grid small {
-  color: var(--muted);
-}
-
-.search-community-prefix {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
-  gap: 0.25em;
 }
 
 .search-results,
@@ -866,10 +844,6 @@ a:focus-visible {
     display: none;
   }
 
-  .search-primary-controls,
-  .search-advanced-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 @media screen and (min-width: 481px) {

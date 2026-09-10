@@ -52,6 +52,7 @@ pub struct SearchChoice {
 
 #[derive(Clone, Debug)]
 pub struct SearchResultView {
+	pub fullname: String,
 	pub metric: String,
 	pub metric_label: String,
 	pub title: String,
@@ -65,15 +66,19 @@ pub struct SearchResultView {
 #[template(path = "search.html")]
 pub struct SearchTemplate {
 	pub query: String,
-	pub community: String,
 	pub kinds: Vec<SearchChoice>,
 	pub sorts: Vec<SearchChoice>,
-	pub times: Vec<SearchChoice>,
 	pub limits: Vec<SearchChoice>,
 	pub results: Vec<SearchResultView>,
 	pub result_count: usize,
 	pub searched: bool,
-	pub advanced_open: bool,
+	pub diagnostic: String,
+	pub error_prefix: String,
+	pub error_text: String,
+	pub error_suffix: String,
+	pub coverage: Vec<String>,
+	pub ranking: String,
+	pub continuation: String,
 	pub next_url: String,
 	pub has_next: bool,
 }
@@ -212,6 +217,7 @@ pub fn search_result(item: &PublicThing) -> Option<SearchResultView> {
 		PublicThing::Post(thing) => {
 			let item = feed_item(&thing.data);
 			Some(SearchResultView {
+				fullname: thing.data.name.clone(),
 				metric: item.score,
 				metric_label: "points".into(),
 				title: item.title,
@@ -224,6 +230,7 @@ pub fn search_result(item: &PublicThing) -> Option<SearchResultView> {
 		PublicThing::Subreddit(thing) => {
 			let subreddit = &thing.data;
 			Some(SearchResultView {
+				fullname: subreddit.name.clone(),
 				metric: compact(subreddit.subscribers),
 				metric_label: "members".into(),
 				title: subreddit.display_name_prefixed.clone(),
@@ -233,16 +240,25 @@ pub fn search_result(item: &PublicThing) -> Option<SearchResultView> {
 				metadata: subreddit.accounts_active.map(|active| format!("{} active", compact(active))).into_iter().collect(),
 			})
 		}
-		PublicThing::User(_) | PublicThing::Comment(_) => None,
+		PublicThing::Comment(thing) => {
+			let c = &thing.data;
+			Some(SearchResultView {
+				fullname: c.name.clone(),
+				metric: c.score.to_string(),
+				metric_label: "points".into(),
+				title: c.body.chars().take(160).collect(),
+				href: format!("/comments/{}/_/{}", c.link_id.trim_start_matches("t3_"), c.id),
+				domain: None,
+				summary: None,
+				metadata: vec![format!("by {}", c.author)],
+			})
+		}
+		PublicThing::User(_) => None,
 	}
 }
 
-pub fn search_choices(
-	active_kind: &str,
-	active_sort: &str,
-	active_time: &str,
-	active_limit: u8,
-) -> (Vec<SearchChoice>, Vec<SearchChoice>, Vec<SearchChoice>, Vec<SearchChoice>) {
+pub fn search_choices(active_kind: &str, active_sort: &str, active_limit: u8) -> (Vec<SearchChoice>, Vec<SearchChoice>, Vec<SearchChoice>) {
+	use neddit_api::search::Mode;
 	let choices = |values: &[(&'static str, &'static str)], active: &str| {
 		values
 			.iter()
@@ -253,24 +269,24 @@ pub fn search_choices(
 			})
 			.collect()
 	};
+	let mut sorts: Vec<SearchChoice> = choices(
+		&[("relevance", "Relevance"), ("new", "New"), ("top", "Top"), ("hot", "Hot"), ("activity", "Activity")],
+		active_sort,
+	);
+	let enabled = [Mode::Posts, Mode::Comments, Mode::Communities]
+		.into_iter()
+		.find(|mode| mode.as_str() == active_kind)
+		.map(Mode::sorts)
+		.unwrap_or_default();
+	sorts.retain(|choice| enabled.contains(&choice.value));
+	let selected = sorts.iter().find(|s| s.checked).or_else(|| sorts.first()).map(|s| s.value);
+	for choice in &mut sorts {
+		choice.checked = Some(choice.value) == selected;
+	}
 	(
-		choices(&[("posts", "Posts"), ("communities", "Communities")], active_kind),
-		choices(
-			&[("relevance", "Relevance"), ("new", "New"), ("top", "Top"), ("hot", "Hot"), ("comments", "Comments")],
-			active_sort,
-		),
-		choices(
-			&[
-				("all", "Any time"),
-				("hour", "Past hour"),
-				("day", "Past day"),
-				("week", "Past week"),
-				("month", "Past month"),
-				("year", "Past year"),
-			],
-			active_time,
-		),
-		choices(&[("10", "10"), ("25", "25"), ("50", "50"), ("100", "100")], &active_limit.to_string()),
+		choices(&[("posts", "Posts"), ("comments", "Comments"), ("communities", "Communities")], active_kind),
+		sorts,
+		choices(&[("25", "25"), ("50", "50"), ("100", "100")], &active_limit.to_string()),
 	)
 }
 

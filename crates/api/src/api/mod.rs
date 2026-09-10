@@ -12,7 +12,49 @@ use axum::{extract::Request, http::uri::PathAndQuery, Router};
 use tower::{util::MapRequest, ServiceExt};
 
 pub fn router(service: RedditService) -> Router {
+	let ql = Router::new().route("/api/search/ql", axum::routing::get(ql_search)).with_state(service.clone());
 	docs::finish(docs::router().merge(routes::router()).merge(public_routes::router()), service)
+		.merge(ql)
+		
+}
+
+/// Execute validated QL against bounded REST sources. Cursors expire after 15 minutes or eviction.
+#[utoipa::path(get, path = "/api/search/ql", params(crate::search::Request), responses(
+	(status = 200, body = crate::search::Page),
+	(status = 400, body = crate::search::Diagnostic),
+	(status = 502, body = crate::search::Diagnostic),
+	(status = 503, body = crate::search::Diagnostic),
+	(status = 504, body = crate::search::Diagnostic)
+))]
+async fn ql_search(
+	axum::extract::State(service): axum::extract::State<RedditService>,
+	query: Result<axum::extract::Query<crate::search::Request>, axum::extract::rejection::QueryRejection>,
+) -> axum::response::Response {
+	use axum::response::IntoResponse;
+	let result: Result<axum::Json<crate::search::Page>, (axum::http::StatusCode, axum::Json<crate::search::Diagnostic>)> = async {
+		let axum::extract::Query(request) = query.map_err(|_| {
+			(
+				axum::http::StatusCode::BAD_REQUEST,
+				axum::Json(crate::search::Diagnostic {
+					code: "invalid_value",
+					message: "Invalid or obsolete search request controls".into(),
+					start: 0,
+					end: 0,
+				}),
+			)
+		})?;
+		service.search_ql(&request).await.map(axum::Json).map_err(|e| {
+			let status = match e.code {
+				"source_failed" => axum::http::StatusCode::BAD_GATEWAY,
+				"execution_timeout" => axum::http::StatusCode::GATEWAY_TIMEOUT,
+				"execution_busy" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
+				_ => axum::http::StatusCode::BAD_REQUEST,
+			};
+			(status, axum::Json(e))
+		})
+	}
+	.await;
+	result.into_response()
 }
 
 pub fn with_json_aliases(router: Router) -> MapRequest<Router, fn(Request) -> Request> {

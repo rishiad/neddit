@@ -19,6 +19,7 @@ use self::oauth::{CredentialLease, OAuthHandle};
 
 const REDDIT_URL_BASE: &str = "https://oauth.reddit.com";
 const REDDIT_URL_BASE_HOST: &str = "oauth.reddit.com";
+const MAX_JSON_BYTES: usize = 8 * 1024 * 1024;
 
 const REDDIT_SHORT_URL_BASE: &str = "https://redd.it";
 const REDDIT_SHORT_URL_BASE_HOST: &str = "redd.it";
@@ -238,8 +239,8 @@ impl RedditClient {
 			for (key, value) in headers {
 				builder = builder.header(key, value);
 			}
-
-			let response = builder.send().await.map_err(|source| {
+			let result = builder.send().await;
+			let response = result.map_err(|source| {
 				crate::dbg_msg!("{method} {url}: {}", source);
 				ClientError::Request { url: url.clone(), source }
 			})?;
@@ -275,13 +276,19 @@ impl RedditClient {
 	/// Make a request to a Reddit API and parse the JSON response.
 	pub async fn json(&self, path: String, access: Access) -> Result<Value, ClientError> {
 		let UpstreamResponse {
-			response,
+			mut response,
 			lease,
 			rate_limit_reset,
 		} = self.reddit_get(path.clone(), access).await?;
 		let generation = lease.generation();
 		let status = response.status();
-		let body = response.bytes().await.map_err(|source| ClientError::Body { path: path.clone(), source })?;
+		if response.content_length().is_some_and(|n| n > MAX_JSON_BYTES as u64) {
+			return Err(ClientError::BodyTooLarge);
+		}
+		let mut body = Vec::new();
+		while let Some(chunk) = response.chunk().await.map_err(|source| ClientError::Body { path: path.clone(), source })? {
+			append_json_chunk(&mut body, &chunk)?;
+		}
 		drop(lease);
 
 		if body.is_empty() {
@@ -309,6 +316,7 @@ impl RedditClient {
 		if json["data"]["is_suspended"].as_bool() == Some(true) {
 			return Err(ClientError::Suspended);
 		}
+		validate_json_envelope(status.as_u16(), &json)?;
 
 		let Some(code) = json["error"].as_i64() else {
 			return Ok(json);
@@ -360,6 +368,24 @@ fn parse_rate_limit_remaining(value: &str) -> Option<u16> {
 		return None;
 	}
 	Some(value.min(f64::from(u16::MAX)) as u16)
+}
+
+fn append_json_chunk(body: &mut Vec<u8>, chunk: &[u8]) -> Result<(), ClientError> {
+	if chunk.len() > MAX_JSON_BYTES.saturating_sub(body.len()) {
+		return Err(ClientError::BodyTooLarge);
+	}
+	body.extend_from_slice(chunk);
+	Ok(())
+}
+
+fn validate_json_envelope(status: u16, json: &Value) -> Result<(), ClientError> {
+	let numeric_error = json.get("error").is_some_and(Value::is_i64);
+	let error = json.get("error").is_some_and(|v| !v.is_null() && !v.is_i64());
+	let errors = json.get("errors").is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
+	if (!(200..300).contains(&status) && !numeric_error) || error || errors {
+		return Err(ClientError::InvalidEnvelope);
+	}
+	Ok(())
 }
 
 fn with_raw_json(path: String) -> String {

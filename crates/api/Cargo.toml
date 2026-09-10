@@ -6,6 +6,9 @@ rust-version.workspace = true
 default-run = "neddit-api"
 
 [dependencies]
+caseless = "=0.2.2"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+unicode-normalization = "=0.1.25"
 axum = "0.8.4"
 clap = { version = "4.4.11", default-features = false, features = [
     "std",

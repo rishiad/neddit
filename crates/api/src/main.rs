@@ -8,6 +8,7 @@ use neddit_api::client::RedditClient;
 use neddit_api::media::MediaSigner;
 use neddit_api::server;
 use neddit_api::service::RedditService;
+use neddit_api::video::VideoResolver;
 use std::path::Path;
 
 #[tokio::main]
@@ -48,6 +49,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 				.help("Read the media URL signing secret from this file")
 				.num_args(1),
 		)
+		.arg(
+			Arg::new("yt-dlp-path")
+				.long("yt-dlp-path")
+				.value_name("FILE")
+				.env("NEDDIT_YT_DLP_PATH")
+				.default_value("yt-dlp")
+				.help("Path to the yt-dlp executable used for hosted video resolution")
+				.num_args(1),
+		)
 		.get_matches();
 
 	let address = matches.get_one::<String>("address").unwrap();
@@ -74,7 +84,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	info!("Creating Reddit client");
 	let reddit = RedditClient::new().await?;
 	let service = RedditService::new(reddit.clone());
-	let media = server::MediaProxy::new(reddit.clone(), signer.clone());
+	let video = VideoResolver::new(matches.get_one::<String>("yt-dlp-path").unwrap());
+	let media = server::MediaProxy::new(reddit.clone(), signer.clone(), video);
 
 	let api = api::with_json_aliases(api::with_reddit_urls(api::router(service), signer));
 	let app = server::with_middleware(server::router(media).fallback_service(api));

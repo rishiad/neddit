@@ -93,8 +93,34 @@ impl MediaSigner {
 		Ok(target)
 	}
 
+	pub(crate) fn scoped_url(&self, route: &str, scope: &str, target: &Url) -> String {
+		let target = target.as_str();
+		let signature = self.scoped_signature(scope, target);
+		let encoded = URL_SAFE_NO_PAD.encode(target);
+		format!("{route}/{signature}/{encoded}")
+	}
+
+	pub(crate) fn decode_scoped_target(&self, scope: &str, signature: &str, encoded: &str) -> Result<Url, MediaUrlError> {
+		let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| MediaUrlError::InvalidEncoding)?;
+		let target = std::str::from_utf8(&bytes).map_err(|_| MediaUrlError::InvalidEncoding)?;
+		let supplied = URL_SAFE_NO_PAD.decode(signature).map_err(|_| MediaUrlError::InvalidSignature)?;
+		let mut verifier = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts keys of any size");
+		verifier.update(scope.as_bytes());
+		verifier.update(&[0]);
+		verifier.update(target.as_bytes());
+		verifier.verify_slice(&supplied).map_err(|_| MediaUrlError::InvalidSignature)?;
+		Url::parse(target).map_err(|_| MediaUrlError::InvalidTarget)
+	}
+
 	pub fn rewrite_hls(&self, manifest: &str, source: &Url) -> Result<String, MediaUrlError> {
-		let manifest = rewrite_captures(manifest, &HLS_URI, 1, |reference| self.rewrite_media_reference(reference, source))?;
+		self.rewrite_hls_with(manifest, |reference| self.rewrite_media_reference(reference, source))
+	}
+
+	pub(crate) fn rewrite_hls_with<E, F>(&self, manifest: &str, mut rewrite: F) -> Result<String, E>
+	where
+		F: FnMut(&str) -> Result<String, E>,
+	{
+		let manifest = rewrite_captures(manifest, &HLS_URI, 1, &mut rewrite)?;
 		let mut rewritten = String::with_capacity(manifest.len());
 		for line in manifest.split_inclusive('\n') {
 			let (content, ending) = line
@@ -103,7 +129,7 @@ impl MediaSigner {
 			if content.is_empty() || content.starts_with('#') {
 				rewritten.push_str(content);
 			} else {
-				rewritten.push_str(&self.rewrite_media_reference(content, source)?);
+				rewritten.push_str(&rewrite(content)?);
 			}
 			rewritten.push_str(ending);
 		}
@@ -162,6 +188,14 @@ impl MediaSigner {
 
 	fn signature(&self, target: &str) -> String {
 		let mut signer = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts keys of any size");
+		signer.update(target.as_bytes());
+		URL_SAFE_NO_PAD.encode(signer.finalize().into_bytes())
+	}
+
+	fn scoped_signature(&self, scope: &str, target: &str) -> String {
+		let mut signer = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts keys of any size");
+		signer.update(scope.as_bytes());
+		signer.update(&[0]);
 		signer.update(target.as_bytes());
 		URL_SAFE_NO_PAD.encode(signer.finalize().into_bytes())
 	}
@@ -242,9 +276,9 @@ fn trim_url_punctuation(url: &str) -> (&str, &str) {
 	url.split_at(split)
 }
 
-fn rewrite_captures<F>(input: &str, pattern: &Regex, capture: usize, mut rewrite: F) -> Result<String, MediaUrlError>
+fn rewrite_captures<F, E>(input: &str, pattern: &Regex, capture: usize, mut rewrite: F) -> Result<String, E>
 where
-	F: FnMut(&str) -> Result<String, MediaUrlError>,
+	F: FnMut(&str) -> Result<String, E>,
 {
 	let mut output = String::with_capacity(input.len());
 	let mut end = 0;

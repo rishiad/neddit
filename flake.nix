@@ -36,18 +36,26 @@
           filter = craneLib.filterCargoSources;
         };
 
-        package = cargoExtraArgs: craneLib.buildPackage {
+        package = { cargoExtraArgs, runtimeInputs ? [ ] }: craneLib.buildPackage {
           inherit src;
           strictDeps = true;
           doCheck = false;
+
+          nativeBuildInputs = lib.optionals (runtimeInputs != [ ]) [ pkgs.makeWrapper ];
+          postInstall = lib.optionalString (runtimeInputs != [ ]) ''
+            wrapProgram $out/bin/neddit-api --prefix PATH : ${lib.makeBinPath runtimeInputs}
+          '';
 
           inherit cargoExtraArgs;
           CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
           CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
         };
 
-        nedditApi = package "-p neddit-api";
-        nedditWeb = package "-p neddit-web";
+        nedditApi = package {
+          cargoExtraArgs = "-p neddit-api";
+          runtimeInputs = [ pkgs.yt-dlp pkgs.deno ];
+        };
+        nedditWeb = package { cargoExtraArgs = "-p neddit-web"; };
       in
       {
         checks = {

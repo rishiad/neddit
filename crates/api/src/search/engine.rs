@@ -190,9 +190,16 @@ fn contradictory(expr: &Expr) -> bool {
 
 impl RedditService {
 	pub async fn search_ql(&self, request: &Request) -> Result<Page> {
+		if !self.content.allows_nsfw() && request.include_nsfw {
+			return Err(Diagnostic::new("content_blocked", "NSFW content is disabled by server policy", (0, 0)));
+		}
+		let mut request = request.clone();
+		if !self.content.allows_nsfw() {
+			request.include_nsfw = false;
+		}
 		let expr = parse(&request.q, request.kind)?;
-		let plan = plan(request, &expr)?;
-		self.search_sessions.execute(self, request, expr, plan).await
+		let plan = plan(&request, &expr)?;
+		self.search_sessions.execute(self, &request, expr, plan).await
 	}
 }
 
@@ -330,54 +337,16 @@ fn needs_parent(expr: &Expr) -> bool {
 		Node::And(a, b) | Node::Or(a, b) => needs_parent(a) || needs_parent(b),
 	}
 }
-fn body(s: &str) -> Datum {
-	if matches!(
-		s.trim().to_ascii_lowercase().as_str(),
-		"[deleted]" | "[removed]" | "[removed by reddit]" | "[ removed by moderator ]"
-	) {
-		Datum::Unknown
-	} else {
-		Datum::Text(s.into())
-	}
-}
-fn author(s: &str) -> Datum {
-	if s == "[deleted]" {
-		Datum::Absent
-	} else if s.is_empty() {
-		Datum::Unknown
-	} else {
-		Datum::Text(s.into())
-	}
-}
-fn optional(extra: &serde_json::Map<String, serde_json::Value>, key: &str) -> Datum {
-	match extra.get(key) {
-		Some(serde_json::Value::Null) => Datum::Absent,
-		Some(serde_json::Value::String(s)) => Datum::Text(s.clone()),
-		_ => Datum::Unknown,
-	}
-}
 fn record(item: &PublicThing) -> Record {
+	if let PublicThing::Post(post) = item {
+		return post_record(&post.data);
+	}
 	let mut r = Record::default();
 	let mut put = |f, v| {
 		r.fields.insert(f, v);
 	};
 	match item {
-		PublicThing::Post(p) => {
-			let p = &p.data;
-			put(Field::Title, body(&p.title));
-			put(Field::Subreddit, Datum::Text(p.subreddit.clone()));
-			put(Field::Author, author(&p.author));
-			put(Field::Flair, optional(&p.extra, "link_flair_text"));
-			put(
-				Field::Domain,
-				url::Url::parse(&p.url)
-					.ok()
-					.and_then(|u| u.host_str().map(str::to_owned))
-					.map_or(Datum::Unknown, Datum::Text),
-			);
-			r.text = vec![body(&p.title), body(&p.selftext)];
-			r.created = seconds(p.created_utc);
-		}
+		PublicThing::Post(_) => unreachable!(),
 		PublicThing::Comment(c) => {
 			let c = &c.data;
 			put(Field::Author, author(&c.author));
@@ -395,7 +364,4 @@ fn record(item: &PublicThing) -> Record {
 		_ => {}
 	}
 	r
-}
-fn seconds(s: f64) -> Option<i128> {
-	(s.is_finite() && (0.0..253402300800.0).contains(&s)).then_some((s * 1_000_000_000.0).round() as i128)
 }

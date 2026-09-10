@@ -8,7 +8,7 @@ use std::{
 	sync::{Arc, LazyLock},
 };
 use thiserror::Error;
-use url::Url;
+use url::{Host, Url};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -21,20 +21,79 @@ const MEDIA_ROUTE: &str = "/media";
 #[derive(Clone)]
 pub struct MediaSigner {
 	key: Arc<[u8]>,
+	domains: DomainPolicy,
+	policy_scope: &'static str,
+}
+
+#[derive(Clone, Debug)]
+pub struct DomainPolicy {
+	navigation: Arc<[HostPattern]>,
+	shortlinks: Arc<[HostPattern]>,
+	media: Arc<[HostPattern]>,
+}
+
+#[derive(Clone, Debug)]
+struct HostPattern {
+	domain: String,
+	subdomains_only: bool,
+}
+
+impl DomainPolicy {
+	pub fn new(navigation: &[String], shortlinks: &[String], media: &[String]) -> Result<Self, MediaUrlError> {
+		Ok(Self {
+			navigation: parse_patterns(navigation)?.into(),
+			shortlinks: parse_patterns(shortlinks)?.into(),
+			media: parse_patterns(media)?.into(),
+		})
+	}
+
+	pub fn rewrite_navigation(&self, url: &str) -> Option<String> {
+		rewrite_navigation(url, self)
+	}
+
+	fn is_navigation_host(&self, host: &str) -> bool {
+		matches_host(&self.navigation, host)
+	}
+
+	fn is_shortlink_host(&self, host: &str) -> bool {
+		matches_host(&self.shortlinks, host)
+	}
+
+	fn is_media_host(&self, host: &str) -> bool {
+		matches_host(&self.media, host)
+	}
+}
+
+impl Default for DomainPolicy {
+	fn default() -> Self {
+		Self {
+			navigation: Arc::from([]),
+			shortlinks: Arc::from([]),
+			media: Arc::from([]),
+		}
+	}
 }
 
 impl MediaSigner {
 	pub fn random() -> Result<Self, std::io::Error> {
 		let mut key = [0_u8; 32];
 		getrandom::fill(&mut key).map_err(|error| std::io::Error::other(format!("failed to generate media signing key: {error}")))?;
-		Ok(Self { key: Arc::from(key) })
+		Ok(Self {
+			key: Arc::from(key),
+			domains: DomainPolicy::default(),
+			policy_scope: "nsfw-allowed",
+		})
 	}
 
 	pub fn from_secret(secret: &[u8]) -> Result<Self, MediaUrlError> {
 		if secret.len() < 32 {
 			return Err(MediaUrlError::ShortSecret);
 		}
-		Ok(Self { key: Arc::from(secret) })
+		Ok(Self {
+			key: Arc::from(secret),
+			domains: DomainPolicy::default(),
+			policy_scope: "nsfw-allowed",
+		})
 	}
 
 	pub fn from_file(path: impl AsRef<Path>) -> Result<Self, MediaSignerLoadError> {
@@ -42,6 +101,16 @@ impl MediaSigner {
 		let start = secret.iter().position(|byte| !byte.is_ascii_whitespace()).unwrap_or(secret.len());
 		let end = secret.iter().rposition(|byte| !byte.is_ascii_whitespace()).map_or(start, |index| index + 1);
 		Self::from_secret(&secret[start..end]).map_err(MediaSignerLoadError::from)
+	}
+
+	pub fn with_domains(mut self, domains: DomainPolicy) -> Self {
+		self.domains = domains;
+		self
+	}
+
+	pub fn with_content_policy(mut self, allow_nsfw: bool) -> Self {
+		self.policy_scope = if allow_nsfw { "nsfw-allowed" } else { "nsfw-blocked" };
+		self
 	}
 
 	pub fn rewrite_value(&self, value: &mut Value) {
@@ -83,7 +152,7 @@ impl MediaSigner {
 	}
 
 	pub fn media_url(&self, target: &Url) -> Result<String, MediaUrlError> {
-		validate_media_target(target)?;
+		self.validate_media_target(target)?;
 		let target = target.as_str();
 		let signature = self.signature(target);
 		let encoded = URL_SAFE_NO_PAD.encode(target);
@@ -95,12 +164,22 @@ impl MediaSigner {
 		let target = std::str::from_utf8(&bytes).map_err(|_| MediaUrlError::InvalidEncoding)?;
 		let supplied = URL_SAFE_NO_PAD.decode(signature).map_err(|_| MediaUrlError::InvalidSignature)?;
 		let mut verifier = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts keys of any size");
+		verifier.update(self.policy_scope.as_bytes());
+		verifier.update(&[0]);
 		verifier.update(target.as_bytes());
 		verifier.verify_slice(&supplied).map_err(|_| MediaUrlError::InvalidSignature)?;
 
 		let target = Url::parse(target).map_err(|_| MediaUrlError::InvalidTarget)?;
-		validate_media_target(&target)?;
+		self.validate_media_target(&target)?;
 		Ok(target)
+	}
+
+	pub fn rewrite_navigation(&self, url: &str) -> Option<String> {
+		rewrite_navigation(url, &self.domains)
+	}
+
+	pub fn validate_media_target(&self, target: &Url) -> Result<(), MediaUrlError> {
+		validate_media_target_with(target, &self.domains)
 	}
 
 	pub(crate) fn scoped_url(&self, route: &str, scope: &str, target: &Url) -> String {
@@ -115,6 +194,8 @@ impl MediaSigner {
 		let target = std::str::from_utf8(&bytes).map_err(|_| MediaUrlError::InvalidEncoding)?;
 		let supplied = URL_SAFE_NO_PAD.decode(signature).map_err(|_| MediaUrlError::InvalidSignature)?;
 		let mut verifier = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts keys of any size");
+		verifier.update(self.policy_scope.as_bytes());
+		verifier.update(&[0]);
 		verifier.update(scope.as_bytes());
 		verifier.update(&[0]);
 		verifier.update(target.as_bytes());
@@ -163,15 +244,15 @@ impl MediaSigner {
 		}
 		let host = target.host_str()?.to_ascii_lowercase();
 
-		if is_reddit_navigation_host(&host) {
+		if self.domains.is_navigation_host(&host) {
 			return Some(local_path(&target));
 		}
-		if host == "redd.it" {
+		if self.domains.is_shortlink_host(&host) {
 			let path = target.path().trim_start_matches('/');
 			target.set_path(&format!("/comments/{path}"));
 			return Some(local_path(&target));
 		}
-		if !is_reddit_media_host(&host) {
+		if !self.domains.is_media_host(&host) {
 			return None;
 		}
 
@@ -198,12 +279,16 @@ impl MediaSigner {
 
 	fn signature(&self, target: &str) -> String {
 		let mut signer = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts keys of any size");
+		signer.update(self.policy_scope.as_bytes());
+		signer.update(&[0]);
 		signer.update(target.as_bytes());
 		URL_SAFE_NO_PAD.encode(signer.finalize().into_bytes())
 	}
 
 	fn scoped_signature(&self, scope: &str, target: &str) -> String {
 		let mut signer = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts keys of any size");
+		signer.update(self.policy_scope.as_bytes());
+		signer.update(&[0]);
 		signer.update(scope.as_bytes());
 		signer.update(&[0]);
 		signer.update(target.as_bytes());
@@ -211,16 +296,16 @@ impl MediaSigner {
 	}
 }
 
-pub fn rewrite_reddit_navigation(url: &str) -> Option<String> {
+fn rewrite_navigation(url: &str, domains: &DomainPolicy) -> Option<String> {
 	let decoded = if url.starts_with("//") { format!("https:{url}") } else { url.to_owned() }.replace("&amp;", "&");
 	let mut target = Url::parse(&decoded).ok()?;
 	if !matches!(target.scheme(), "http" | "https") || !target.username().is_empty() || target.password().is_some() {
 		return None;
 	}
 	let host = target.host_str()?.to_ascii_lowercase();
-	if is_reddit_navigation_host(&host) {
+	if domains.is_navigation_host(&host) {
 		Some(local_path(&target))
-	} else if host == "redd.it" {
+	} else if domains.is_shortlink_host(&host) {
 		let path = target.path().trim_start_matches('/');
 		target.set_path(&format!("/comments/{path}"));
 		Some(local_path(&target))
@@ -229,31 +314,44 @@ pub fn rewrite_reddit_navigation(url: &str) -> Option<String> {
 	}
 }
 
-pub fn validate_media_target(target: &Url) -> Result<(), MediaUrlError> {
+fn validate_media_target_with(target: &Url, domains: &DomainPolicy) -> Result<(), MediaUrlError> {
 	let host = target.host_str().ok_or(MediaUrlError::InvalidTarget)?.to_ascii_lowercase();
-	if target.scheme() != "https" || !target.username().is_empty() || target.password().is_some() || target.port().is_some() || !is_reddit_media_host(&host) {
+	if target.scheme() != "https" || !target.username().is_empty() || target.password().is_some() || target.port().is_some() || !domains.is_media_host(&host) {
 		return Err(MediaUrlError::ForbiddenTarget);
 	}
 	Ok(())
 }
 
-fn is_reddit_navigation_host(host: &str) -> bool {
-	host == "reddit.com" || host.ends_with(".reddit.com")
+fn parse_patterns(values: &[String]) -> Result<Vec<HostPattern>, MediaUrlError> {
+	values.iter().map(|value| HostPattern::parse(value)).collect()
 }
 
-fn is_reddit_media_host(host: &str) -> bool {
-	(host != "redd.it" && host.ends_with(".redd.it"))
-		|| host == "redditmedia.com"
-		|| host.ends_with(".redditmedia.com")
-		|| host == "redditstatic.com"
-		|| host.ends_with(".redditstatic.com")
-		|| matches!(
-			host,
-			"reddit-econ-prod-assets-permanent.s3.amazonaws.com"
-				| "reddit-image-uploads.s3.amazonaws.com"
-				| "reddit-uploaded-media.s3-accelerate.amazonaws.com"
-				| "reddit-uploaded-video.s3-accelerate.amazonaws.com"
-		)
+impl HostPattern {
+	fn parse(value: &str) -> Result<Self, MediaUrlError> {
+		let (subdomains_only, value) = value.strip_prefix("*.").map_or((false, value), |value| (true, value));
+		if value.is_empty() || value.contains('*') {
+			return Err(MediaUrlError::InvalidDomainPattern(value.to_owned()));
+		}
+		let Host::Domain(domain) = Host::parse(value).map_err(|_| MediaUrlError::InvalidDomainPattern(value.to_owned()))? else {
+			return Err(MediaUrlError::InvalidDomainPattern(value.to_owned()));
+		};
+		Ok(Self {
+			domain: domain.to_ascii_lowercase(),
+			subdomains_only,
+		})
+	}
+
+	fn matches(&self, host: &str) -> bool {
+		if self.subdomains_only {
+			host.strip_suffix(&self.domain).is_some_and(|prefix| prefix.ends_with('.') && prefix.len() > 1)
+		} else {
+			host == self.domain
+		}
+	}
+}
+
+fn matches_host(patterns: &[HostPattern], host: &str) -> bool {
+	patterns.iter().any(|pattern| pattern.matches(host))
 }
 
 fn local_path(target: &Url) -> String {
@@ -320,6 +418,8 @@ pub enum MediaUrlError {
 	ForbiddenTarget,
 	#[error("invalid URL in Reddit media manifest")]
 	InvalidManifestUrl,
+	#[error("invalid domain pattern `{0}`")]
+	InvalidDomainPattern(String),
 }
 
 #[derive(Debug, Error)]

@@ -9,6 +9,9 @@ use url::form_urlencoded::Serializer;
 impl RedditService {
 	pub async fn more_children(&self, query: &MoreChildrenQuery, access: Access) -> Result<MoreChildren, ServiceError> {
 		validate_more_children_query(query)?;
+		if !self.content.allows_nsfw() && self.posts_by_id(&query.link_id, access).await?.data.children.is_empty() {
+			return Err(ServiceError::ContentBlocked);
+		}
 		let _permit = self.more_children_gate.acquire().await.expect("the more-children request semaphore is never closed");
 		let path = with_query("/api/morechildren".to_string(), encode_more_children_query(query));
 		let json = self.client.json(path, access).await?;

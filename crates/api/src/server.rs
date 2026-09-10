@@ -1,5 +1,5 @@
 use crate::client::{error::ClientError, RedditClient};
-use crate::media::{validate_media_target, MediaSigner, MediaUrlError};
+use crate::media::{MediaSigner, MediaUrlError};
 use crate::video::{decode_video_target, rewrite_hls as rewrite_video_hls, validate_video_target, VideoError, VideoPlayback, VideoResolver};
 use axum::{
 	body::{to_bytes, Body},
@@ -29,11 +29,11 @@ const VIDEO_CACHE_CONTROL: &str = "public, max-age=900";
 pub struct MediaProxy {
 	client: RedditClient,
 	signer: MediaSigner,
-	video: VideoResolver,
+	video: Option<VideoResolver>,
 }
 
 impl MediaProxy {
-	pub fn new(client: RedditClient, signer: MediaSigner, video: VideoResolver) -> Self {
+	pub fn new(client: RedditClient, signer: MediaSigner, video: Option<VideoResolver>) -> Self {
 		Self { client, signer, video }
 	}
 
@@ -41,17 +41,29 @@ impl MediaProxy {
 		&self.signer
 	}
 
+	pub const fn video_enabled(&self) -> bool {
+		self.video.is_some()
+	}
+
 	pub async fn resolve_video(&self, url: &str) -> Result<VideoPlayback, VideoError> {
-		self.video.resolve(url, &self.signer).await
+		self.video.as_ref().ok_or(VideoError::Disabled)?.resolve(url, &self.signer).await
 	}
 }
 
 pub fn router(media: MediaProxy) -> Router {
-	Router::new()
-		.route("/media/{signature}/{encoded}", get(proxy_media))
-		.route("/video/resolve", get(resolve_video))
-		.route("/video/media/{signature}/{encoded}", get(proxy_video))
-		.with_state(media)
+	let mut router = Router::new().route("/media/{signature}/{encoded}", get(proxy_media));
+	if media.video.is_some() {
+		router = router.route("/video/media/{signature}/{encoded}", get(proxy_video));
+	}
+	router.with_state(media)
+}
+
+pub fn video_router(media: MediaProxy) -> Router {
+	if media.video.is_some() {
+		Router::new().route("/video/resolve", get(resolve_video)).with_state(media)
+	} else {
+		Router::new()
+	}
 }
 
 #[derive(Deserialize)]
@@ -108,7 +120,7 @@ async fn proxy_media(State(media): State<MediaProxy>, Path((signature, encoded))
 			.to_str()
 			.map_err(|_| ProxyError::InvalidRedirect)?;
 		let redirected = target.join(location).map_err(|_| ProxyError::InvalidRedirect)?;
-		validate_media_target(&redirected).map_err(|_| ProxyError::ForbiddenRedirect)?;
+		media.signer.validate_media_target(&redirected).map_err(|_| ProxyError::ForbiddenRedirect)?;
 		target = redirected;
 	}
 
@@ -117,7 +129,7 @@ async fn proxy_media(State(media): State<MediaProxy>, Path((signature, encoded))
 
 async fn proxy_video(State(media): State<MediaProxy>, Path((signature, encoded)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ProxyError> {
 	let mut target = decode_video_target(&media.signer, &signature, &encoded)?;
-	let user_agent = media.video.user_agent_for(&target).await;
+	let user_agent = media.video.as_ref().ok_or(VideoError::Disabled)?.user_agent_for(&target).await;
 	let etag = format!("\"{signature}\"");
 	if request_has_etag(&headers, &etag) {
 		return not_modified(&etag, VIDEO_CACHE_CONTROL);

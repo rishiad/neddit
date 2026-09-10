@@ -8,8 +8,8 @@ use ammonia::{Builder, UrlRelative};
 use askama::Template;
 use askama_web::WebTemplate;
 
-use neddit_api::media::{rewrite_reddit_navigation, MediaSigner};
-use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, PublicThing, Subreddit, WikiPage, WikiPageListing};
+use neddit_api::media::MediaSigner;
+use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, PublicThing, Subreddit, User, WikiPage, WikiPageListing};
 use neddit_api::video::{VideoPlayback, VideoResolver};
 use url::{form_urlencoded, Url};
 
@@ -19,8 +19,11 @@ pub struct FeedItem {
 	pub href: String,
 	pub domain: String,
 	pub show_domain: bool,
+	pub flair: Option<PostFlair>,
 	pub author: String,
+	pub author_url: String,
 	pub subreddit: String,
+	pub show_subreddit: bool,
 	pub permalink: String,
 	pub age: String,
 	pub score: String,
@@ -28,6 +31,12 @@ pub struct FeedItem {
 	pub stickied: bool,
 	pub badges: Vec<&'static str>,
 	pub video: Option<VideoView>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PostFlair {
+	pub text: String,
+	pub href: String,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +72,39 @@ pub struct FeedTemplate {
 	pub feed_label: String,
 }
 
+#[derive(Template, WebTemplate)]
+#[template(path = "custom_feed.html")]
+pub struct CustomFeedTemplate {
+	pub mode: FeedPageMode,
+	pub share_url: String,
+	pub query: String,
+	pub rank: String,
+	pub include_nsfw: bool,
+	pub nsfw_available: bool,
+	pub pools: Vec<SelectChoice>,
+	pub times: Vec<SelectChoice>,
+	pub limits: Vec<SelectChoice>,
+	pub items: Vec<FeedItem>,
+	pub feed_label: String,
+	pub result_count: usize,
+	pub searched: bool,
+	pub diagnostic: String,
+	pub coverage: Vec<String>,
+	pub pagination: Pagination,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum FeedPageMode {
+	Builder,
+	Shared,
+}
+
+impl FeedPageMode {
+	pub const fn is_builder(self) -> bool {
+		matches!(self, Self::Builder)
+	}
+}
+
 #[derive(Clone, Debug)]
 pub struct Pagination {
 	pub page: u32,
@@ -95,6 +137,7 @@ pub struct SearchMetadata {
 pub struct SearchTemplate {
 	pub query: String,
 	pub include_nsfw: bool,
+	pub nsfw_available: bool,
 	pub kinds: Vec<SelectChoice>,
 	pub sorts: Vec<SelectChoice>,
 	pub times: Vec<SelectChoice>,
@@ -124,6 +167,27 @@ pub struct CommunityView {
 	pub over_18: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct UserProfileView {
+	pub name: String,
+	pub description: Option<String>,
+	pub karma: String,
+	pub joined: String,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "user.html")]
+pub struct UserTemplate {
+	pub profile: UserProfileView,
+	pub results: Vec<SearchResultView>,
+	pub controls: SortControls,
+	pub posts_url: String,
+	pub comments_url: String,
+	pub posts_active: bool,
+	pub comments_active: bool,
+	pub pagination: Pagination,
+}
+
 #[derive(Template, WebTemplate)]
 #[template(path = "subreddit.html")]
 pub struct SubredditTemplate {
@@ -148,6 +212,7 @@ pub struct WikiView {
 	pub revision_age: String,
 	pub show_revision: bool,
 	pub links: Vec<WikiLink>,
+	pub generated: bool,
 }
 
 #[derive(Template, WebTemplate)]
@@ -190,17 +255,19 @@ pub struct GalleryImageView {
 pub struct CommentView {
 	pub id: String,
 	pub author: String,
+	pub author_url: String,
 	pub body: String,
 	pub score: String,
 	pub age: String,
 	pub permalink: String,
+	pub parent_url: String,
 	pub more_url: String,
 	pub more: bool,
 }
 
 #[derive(Clone, Debug)]
 pub enum CommentTreeEvent {
-	Open(CommentView),
+	Open(Box<CommentView>),
 	OpenReplies,
 	CloseReplies,
 	Close,
@@ -241,12 +308,12 @@ pub struct MoreCommentsTemplate {
 	pub comment_tree: Vec<CommentTreeEvent>,
 }
 
-pub fn feed_item(post: &Post) -> FeedItem {
-	let permalink = local_web_navigation(&post.permalink).unwrap_or_else(|| post.permalink.clone());
+pub fn feed_item(post: &Post, signer: &MediaSigner) -> FeedItem {
+	let permalink = local_web_navigation(&post.permalink, signer).unwrap_or_else(|| post.permalink.clone());
 	let href = if post.is_self {
 		permalink.clone()
 	} else {
-		safe_outbound(&post.url).unwrap_or_else(|| permalink.clone())
+		safe_outbound(&post.url, signer).unwrap_or_else(|| permalink.clone())
 	};
 	let domain = outbound_domain(&href).unwrap_or_default();
 	let mut badges = Vec::with_capacity(4);
@@ -268,8 +335,11 @@ pub fn feed_item(post: &Post) -> FeedItem {
 		href,
 		show_domain: !domain.is_empty(),
 		domain,
+		flair: None,
 		author: display_author(&post.author),
+		author_url: author_path(&post.author),
 		subreddit: post.subreddit.clone(),
+		show_subreddit: true,
 		permalink,
 		age: age(post.created_utc),
 		score: if post.hide_score { "—".into() } else { compact(post.score.max(0).unsigned_abs()) },
@@ -280,14 +350,24 @@ pub fn feed_item(post: &Post) -> FeedItem {
 	}
 }
 
-pub fn feed_item_with_media(post: &Post, signer: &MediaSigner) -> FeedItem {
-	let mut item = feed_item(post);
+pub fn subreddit_feed_item(post: &Post, signer: &MediaSigner, subreddit_is_nsfw: bool) -> FeedItem {
+	let mut item = feed_item(post, signer);
+	item.show_subreddit = false;
+	item.flair = post_flair(post);
+	if subreddit_is_nsfw {
+		item.badges.retain(|badge| *badge != "NSFW");
+	}
+	item
+}
+
+pub fn feed_item_with_media(post: &Post, signer: &MediaSigner, video_enabled: bool) -> FeedItem {
+	let mut item = feed_item(post, signer);
 	if let Some(rewritten) = post_media_url(post, signer).filter(|_| !post.spoiler) {
 		item.href = rewritten;
 		item.domain.clear();
 		item.show_domain = false;
 	}
-	if VideoResolver::supports(&post.url) {
+	if video_enabled && VideoResolver::supports(&post.url) {
 		let mut query = form_urlencoded::Serializer::new(String::new());
 		query.append_pair("url", &post.url);
 		item.video = Some(VideoView {
@@ -297,6 +377,15 @@ pub fn feed_item_with_media(post: &Post, signer: &MediaSigner) -> FeedItem {
 				rewritten.starts_with("/media/").then_some(rewritten)
 			}),
 		});
+	}
+	item
+}
+
+pub fn custom_feed_item(post: &Post, signer: &MediaSigner, video_enabled: bool, include_nsfw: bool) -> FeedItem {
+	let mut item = feed_item_with_media(post, signer, video_enabled);
+	item.flair = post_flair(post);
+	if include_nsfw {
+		item.badges.retain(|badge| *badge != "NSFW");
 	}
 	item
 }
@@ -322,26 +411,9 @@ fn preview_url(post: &Post) -> Option<&str> {
 	best.or_else(|| post.extra.get("thumbnail")?.as_str().filter(|url| url.starts_with("https://") || url.starts_with("//")))
 }
 
-pub fn search_result(item: &PublicThing, signer: &MediaSigner) -> Option<SearchResultView> {
+pub fn search_result(item: &PublicThing, signer: &MediaSigner, video_enabled: bool) -> Option<SearchResultView> {
 	match item {
-		PublicThing::Post(thing) => {
-			let item = feed_item_with_media(&thing.data, signer);
-			Some(SearchResultView {
-				fullname: thing.data.name.clone(),
-				metric: item.score,
-				metric_label: "points".into(),
-				title: item.title,
-				href: item.href,
-				domain: item.show_domain.then_some(item.domain),
-				summary: None,
-				metadata: vec![
-					linked_metadata(format!("by {}", item.author), reddit_user_url(&item.author)),
-					plain_metadata(item.age),
-					linked_metadata(format!("{} comments", item.comments), item.permalink),
-					linked_metadata(format!("in r/{}", thing.data.subreddit), format!("/r/{}", thing.data.subreddit)),
-				],
-			})
-		}
+		PublicThing::Post(thing) => Some(post_result(&thing.data, signer, video_enabled)),
 		PublicThing::Subreddit(thing) => {
 			let subreddit = &thing.data;
 			Some(SearchResultView {
@@ -361,22 +433,45 @@ pub fn search_result(item: &PublicThing, signer: &MediaSigner) -> Option<SearchR
 		}
 		PublicThing::Comment(thing) => {
 			let c = &thing.data;
-			let mut metadata = vec![linked_metadata(format!("by {}", c.author), reddit_user_url(&c.author)), plain_metadata(age(c.created_utc))];
+			let mut metadata = vec![
+				optional_link_metadata(format!("by {}", display_author(&c.author)), author_path(&c.author)),
+				plain_metadata(age(c.created_utc)),
+			];
 			if let Some(subreddit) = c.extra.get("subreddit").and_then(|value| value.as_str()) {
 				metadata.push(linked_metadata(format!("in r/{subreddit}"), format!("/r/{subreddit}")));
 			}
+			metadata.push(linked_metadata("parent".into(), comment_parent_url(c)));
 			Some(SearchResultView {
 				fullname: c.name.clone(),
 				metric: c.score.to_string(),
 				metric_label: "points".into(),
 				title: c.body.chars().take(160).collect(),
-				href: format!("/comments/{}/_/{}", c.link_id.trim_start_matches("t3_"), c.id),
+				href: comment_url(c),
 				domain: None,
 				summary: None,
 				metadata,
 			})
 		}
 		PublicThing::User(_) => None,
+	}
+}
+
+pub fn post_result(post: &Post, signer: &MediaSigner, video_enabled: bool) -> SearchResultView {
+	let item = feed_item_with_media(post, signer, video_enabled);
+	SearchResultView {
+		fullname: post.name.clone(),
+		metric: item.score,
+		metric_label: "points".into(),
+		title: item.title,
+		href: item.href,
+		domain: item.show_domain.then_some(item.domain),
+		summary: None,
+		metadata: vec![
+			optional_link_metadata(format!("by {}", item.author), item.author_url),
+			plain_metadata(item.age),
+			linked_metadata(format!("{} comments", item.comments), item.permalink),
+			linked_metadata(format!("in r/{}", post.subreddit), format!("/r/{}", post.subreddit)),
+		],
 	}
 }
 
@@ -388,10 +483,37 @@ fn plain_metadata(text: String) -> SearchMetadata {
 	SearchMetadata { text, href: None }
 }
 
-fn reddit_user_url(author: &str) -> String {
-	let mut url = Url::parse("https://www.reddit.com").expect("static Reddit URL is valid");
-	url.path_segments_mut().expect("HTTPS URLs support path segments").extend(["user", author]);
-	url.to_string()
+fn optional_link_metadata(text: String, href: String) -> SearchMetadata {
+	if href.is_empty() {
+		plain_metadata(text)
+	} else {
+		linked_metadata(text, href)
+	}
+}
+
+fn author_path(author: &str) -> String {
+	if author.is_empty() || author == "[deleted]" {
+		return String::new();
+	}
+	let mut url = Url::parse("http://neddit.local").expect("static base URL is valid");
+	url.path_segments_mut().expect("HTTP URLs support path segments").extend(["user", author]);
+	url.path().to_owned()
+}
+
+pub fn user_profile(user: &User) -> UserProfileView {
+	let karma = user.total_karma.unwrap_or_else(|| user.comment_karma.saturating_add(user.link_karma));
+	UserProfileView {
+		name: user.name.clone(),
+		description: user
+			.subreddit
+			.as_ref()
+			.and_then(|subreddit| subreddit.get("public_description"))
+			.and_then(|description| description.as_str())
+			.map(str::trim)
+			.and_then(nonempty),
+		karma: format!("{} karma", signed_compact(karma)),
+		joined: format!("Joined {}", age(user.created_utc)),
+	}
 }
 
 pub fn search_choices(active_kind: &str, active_sort: &str, active_limit: u8) -> (Vec<SelectChoice>, Vec<SelectChoice>, Vec<SelectChoice>) {
@@ -427,7 +549,7 @@ pub fn search_choices(active_kind: &str, active_sort: &str, active_limit: u8) ->
 	)
 }
 
-pub fn community_view(subreddit: &Subreddit) -> CommunityView {
+pub fn community_view(subreddit: &Subreddit, signer: &MediaSigner, has_wiki: bool) -> CommunityView {
 	let title = if subreddit.title.trim().is_empty() {
 		subreddit.display_name_prefixed.clone()
 	} else {
@@ -435,7 +557,11 @@ pub fn community_view(subreddit: &Subreddit) -> CommunityView {
 	};
 	let public_description = nonempty(subreddit.public_description.trim());
 	let description = subreddit.description.as_deref().and_then(|s| nonempty(s.trim()));
-	let description_html = subreddit.description_html.as_deref().map(sanitize_html).and_then(|html| nonempty(&html));
+	let description_html = subreddit
+		.description_html
+		.as_deref()
+		.map(|html| sanitize_html(html, signer))
+		.and_then(|html| nonempty(&html));
 	let posts_url = format!("/r/{}", subreddit.display_name);
 	CommunityView {
 		display_name_prefixed: subreddit.display_name_prefixed.clone(),
@@ -445,41 +571,77 @@ pub fn community_view(subreddit: &Subreddit) -> CommunityView {
 		description_html,
 		members: subreddit.subscribers.map_or_else(|| "—".into(), compact),
 		active: subreddit.accounts_active.map_or_else(|| "—".into(), compact),
-		wiki_url: format!("{posts_url}/wiki/index"),
+		wiki_url: if has_wiki { wiki_path(&subreddit.display_name, "index") } else { String::new() },
 		posts_url,
-		has_wiki: subreddit.wiki_enabled.unwrap_or(false),
+		has_wiki,
 		over_18: subreddit.over18 == Some(true),
 	}
 }
 
-pub fn wiki_view(subreddit: &str, page: &str, wiki: &WikiPage, pages: &WikiPageListing) -> WikiView {
-	let title = if page == "index" { "Wiki".into() } else { page.replace(['_', '-'], " ") };
+pub fn has_public_wiki_pages(pages: &WikiPageListing) -> bool {
+	pages.data.iter().any(|page| is_public_wiki_page(page))
+}
+
+pub fn has_wiki_page(pages: &WikiPageListing, page: &str) -> bool {
+	pages.data.iter().any(|candidate| candidate == page && is_public_wiki_page(candidate))
+}
+
+fn is_public_wiki_page(page: &str) -> bool {
+	!page.starts_with("config/")
+}
+
+pub fn wiki_links(subreddit: &str, active_page: Option<&str>, pages: &WikiPageListing) -> Vec<WikiLink> {
 	let mut links: Vec<_> = pages
 		.data
 		.iter()
-		.filter(|label| !label.starts_with("config/"))
-		.map(|label| WikiLink {
-			label: if label == "index" { "Home".into() } else { label.replace('_', " ") },
-			href: wiki_path(subreddit, label),
-			active: label == page,
+		.filter(|page| is_public_wiki_page(page))
+		.map(|page| WikiLink {
+			label: if page == "index" { "Home".into() } else { page.replace('_', " ") },
+			href: wiki_path(subreddit, page),
+			active: active_page == Some(page),
 		})
 		.collect();
 	links.sort_by_key(|link| (link.label != "Home", link.label.clone()));
+	links
+}
+
+pub fn wiki_view(subreddit: &str, page: &str, wiki: &WikiPage, pages: &WikiPageListing, signer: &MediaSigner) -> WikiView {
+	let title = if page == "index" { "Wiki".into() } else { page.replace(['_', '-'], " ") };
 	WikiView {
 		title,
-		content_html: sanitize_html(&wiki.data.content_html),
+		content_html: sanitize_html(&wiki.data.content_html, signer),
 		revision_age: wiki.data.revision_date.map_or_else(String::new, age),
 		show_revision: wiki.data.revision_date.is_some(),
-		links,
+		links: wiki_links(subreddit, Some(page), pages),
+		generated: false,
 	}
 }
 
-fn sanitize_html(value: &str) -> String {
-	Builder::new()
+pub fn generated_wiki_index(subreddit: &str, pages: &WikiPageListing) -> WikiView {
+	WikiView {
+		title: "Wiki".into(),
+		content_html: String::new(),
+		revision_age: String::new(),
+		show_revision: false,
+		links: wiki_links(subreddit, None, pages),
+		generated: true,
+	}
+}
+
+fn sanitize_html(value: &str, signer: &MediaSigner) -> String {
+	let signer = signer.clone();
+	let mut builder = Builder::new();
+	for heading in ["h1", "h2", "h3", "h4", "h5", "h6"] {
+		builder.add_tag_attributes(heading, &["id"]);
+	}
+	builder
 		.url_relative(UrlRelative::PassThrough)
-		.attribute_filter(|element, attribute, value| {
+		.attribute_filter(move |element, attribute, value| {
 			if element == "a" && attribute == "href" {
-				return Some(local_web_navigation(value).map_or_else(|| Cow::Borrowed(value), Cow::Owned));
+				return Some(local_web_navigation(value, &signer).map_or_else(|| Cow::Borrowed(value), Cow::Owned));
+			}
+			if attribute == "id" && !value.starts_with("wiki_") {
+				return None;
 			}
 			Some(Cow::Borrowed(value))
 		})
@@ -491,8 +653,9 @@ fn nonempty(value: &str) -> Option<String> {
 	(!value.is_empty()).then(|| value.to_owned())
 }
 
-pub fn post_view(post: &Post, signer: &MediaSigner) -> PostView {
-	let item = feed_item_with_media(post, signer);
+pub fn post_view(post: &Post, signer: &MediaSigner, video_enabled: bool) -> PostView {
+	let mut item = feed_item_with_media(post, signer, video_enabled);
+	item.flair = post_flair(post);
 	let gallery = gallery_view(post, signer, 0);
 	let image_url = if gallery.is_none() && item.video.is_none() && is_image_post(post) {
 		post_media_url(post, signer)
@@ -509,6 +672,24 @@ pub fn post_view(post: &Post, signer: &MediaSigner) -> PostView {
 		hide_content: post.spoiler,
 		content_url: format!("/post-content/{}", post.id),
 	}
+}
+
+fn post_flair(post: &Post) -> Option<PostFlair> {
+	let text = post.extra.get("link_flair_text")?.as_str()?.trim();
+	if text.is_empty() {
+		return None;
+	}
+	let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+	let query = format!("subreddit:{} flair:\"{escaped}\"", post.subreddit);
+	let mut params = form_urlencoded::Serializer::new(String::new());
+	params.append_pair("q", &query).append_pair("kind", "posts");
+	if post.over_18 {
+		params.append_pair("include_nsfw", "true");
+	}
+	Some(PostFlair {
+		text: text.to_owned(),
+		href: format!("/search?{}", params.finish()),
+	})
 }
 
 pub fn gallery_view(post: &Post, signer: &MediaSigner, index: usize) -> Option<GalleryView> {
@@ -589,16 +770,18 @@ pub fn loaded_comment_tree(children: &[CommentChild], parent_id: &str, link_id: 
 		}
 	}
 	if !remaining.is_empty() {
-		tree.push(CommentTreeEvent::Open(CommentView {
+		tree.push(CommentTreeEvent::Open(Box::new(CommentView {
 			id: String::new(),
 			author: String::new(),
+			author_url: String::new(),
 			body: format!("{} more replies", compact(remaining.len() as u64)),
 			score: String::new(),
 			age: String::new(),
 			permalink: String::new(),
+			parent_url: String::new(),
 			more_url: more_comments_url(remaining, link_id, parent_id, sort),
 			more: true,
-		}));
+		})));
 		tree.push(CommentTreeEvent::Close);
 	}
 	tree
@@ -649,10 +832,36 @@ pub fn comment_sort_controls(active: &'static str, permalink: &str, query: &str)
 	}
 }
 
+pub fn user_controls(action: &str, active_sort: &'static str, active_time: &str) -> SortControls {
+	SortControls {
+		action: action.into(),
+		label: "User activity sorting",
+		choice_label: "Sort user activity",
+		active_sort,
+		query: String::new(),
+		sorts: select_choices([("new", "New"), ("hot", "Hot"), ("top", "Top"), ("controversial", "Controversial")], active_sort),
+		times: if active_sort == "top" {
+			select_choices(
+				[
+					("hour", "Past hour"),
+					("day", "Past 24 hours"),
+					("week", "Past week"),
+					("month", "Past month"),
+					("year", "Past year"),
+					("all", "All time"),
+				],
+				active_time,
+			)
+		} else {
+			Vec::new()
+		},
+	}
+}
+
 pub fn search_comment_tree(comments: &[Comment]) -> Vec<CommentTreeEvent> {
 	let mut tree = Vec::with_capacity(comments.len() * 2);
 	for comment in comments {
-		tree.push(CommentTreeEvent::Open(comment_view(comment)));
+		tree.push(CommentTreeEvent::Open(Box::new(comment_view(comment))));
 		tree.push(CommentTreeEvent::Close);
 	}
 	tree
@@ -707,7 +916,7 @@ fn listing_page_url(base: &str, sort: &str, time: &str, cursor_name: &str, curso
 	format!("{base}?{}", query.finish())
 }
 
-fn wiki_path(subreddit: &str, page: &str) -> String {
+pub(crate) fn wiki_path(subreddit: &str, page: &str) -> String {
 	let mut url = Url::parse("http://neddit.local").expect("static base URL is valid");
 	{
 		let mut segments = url.path_segments_mut().expect("HTTP URLs support path segments");
@@ -717,26 +926,34 @@ fn wiki_path(subreddit: &str, page: &str) -> String {
 	url.path().to_owned()
 }
 
-fn safe_outbound(value: &str) -> Option<String> {
+fn safe_outbound(value: &str, signer: &MediaSigner) -> Option<String> {
 	let url = Url::parse(value).ok()?;
 	if !matches!(url.scheme(), "http" | "https") {
 		return None;
 	}
-	Some(local_web_navigation(url.as_str()).unwrap_or_else(|| url.to_string()))
+	Some(local_web_navigation(url.as_str(), signer).unwrap_or_else(|| url.to_string()))
 }
 
-fn local_web_navigation(value: &str) -> Option<String> {
-	let local = rewrite_reddit_navigation(value)?;
+fn local_web_navigation(value: &str, signer: &MediaSigner) -> Option<String> {
+	let local = signer.rewrite_navigation(value)?;
 	let base = Url::parse("http://neddit.local").expect("static base URL is valid");
 	let url = base.join(&local).ok()?;
 	let segments: Vec<_> = url.path_segments()?.filter(|segment| !segment.is_empty()).collect();
 
-	let supported = matches!(segments.as_slice(), [] | ["search"] | ["comments", _, ..] | ["r", _] | ["r", _, "comments" | "wiki", ..]);
+	let supported = matches!(
+		segments.as_slice(),
+		[] | ["search"] | ["comments", _, ..] | ["r" | "user", _] | ["r", _, "comments" | "wiki", ..]
+	);
 	if !supported {
 		return None;
 	}
 
-	let mut local = url.path().to_owned();
+	let path = url.path();
+	let mut local = if matches!(segments.as_slice(), ["r", _, "wiki", _, ..]) {
+		path.trim_end_matches('/').to_owned()
+	} else {
+		path.to_owned()
+	};
 	if let Some(query) = url.query() {
 		local.push('?');
 		local.push_str(query);
@@ -767,7 +984,7 @@ fn append_comments(children: &[CommentChild], link_id: &str, sort: &str, tree: &
 		match child {
 			CommentChild::Comment(comment) => {
 				let data = &comment.data;
-				tree.push(CommentTreeEvent::Open(comment_view(data)));
+				tree.push(CommentTreeEvent::Open(Box::new(comment_view(data))));
 				if let CommentReplies::Listing(replies) = &data.replies {
 					if !replies.data.children.is_empty() {
 						tree.push(CommentTreeEvent::OpenReplies);
@@ -778,7 +995,7 @@ fn append_comments(children: &[CommentChild], link_id: &str, sort: &str, tree: &
 				tree.push(CommentTreeEvent::Close);
 			}
 			CommentChild::More(more) => {
-				tree.push(CommentTreeEvent::Open(more_view(&more.data, link_id, sort)));
+				tree.push(CommentTreeEvent::Open(Box::new(more_view(&more.data, link_id, sort))));
 				tree.push(CommentTreeEvent::Close);
 			}
 		}
@@ -789,10 +1006,12 @@ fn comment_view(comment: &Comment) -> CommentView {
 	CommentView {
 		id: comment.id.clone(),
 		author: display_author(&comment.author),
+		author_url: author_path(&comment.author),
 		body: comment.body.clone(),
 		score: signed_compact(comment.score),
 		age: age(comment.created_utc),
 		permalink: format!("#comment-{}", comment.id),
+		parent_url: comment_parent_url(comment),
 		more_url: String::new(),
 		more: false,
 	}
@@ -802,6 +1021,7 @@ fn more_view(more: &More, link_id: &str, sort: &str) -> CommentView {
 	CommentView {
 		id: more.id.clone(),
 		author: String::new(),
+		author_url: String::new(),
 		body: if more.count == 0 {
 			"Continue this thread".into()
 		} else {
@@ -809,10 +1029,44 @@ fn more_view(more: &More, link_id: &str, sort: &str) -> CommentView {
 		},
 		score: String::new(),
 		age: String::new(),
-		permalink: String::new(),
+		permalink: if more.children.is_empty() {
+			continue_thread_url(link_id, &more.parent_id, sort)
+		} else {
+			String::new()
+		},
+		parent_url: String::new(),
 		more_url: more_comments_url(&more.children, link_id, &more.parent_id, sort),
 		more: true,
 	}
+}
+
+fn continue_thread_url(link_id: &str, parent_id: &str, sort: &str) -> String {
+	let (Some(article), Some(parent)) = (link_id.strip_prefix("t3_"), parent_id.strip_prefix("t1_")) else {
+		return String::new();
+	};
+	let mut url = format!("/comments/{article}/_/{parent}");
+	if sort != "best" {
+		let mut query = form_urlencoded::Serializer::new(String::new());
+		query.append_pair("sort", sort);
+		url.push('?');
+		url.push_str(&query.finish());
+	}
+	url.push_str("#comment-");
+	url.push_str(parent);
+	url
+}
+
+fn comment_parent_url(comment: &Comment) -> String {
+	let article = comment.link_id.trim_start_matches("t3_");
+	comment
+		.parent_id
+		.strip_prefix("t1_")
+		.map_or_else(|| format!("/comments/{article}#post"), |parent| format!("/comments/{article}/_/{parent}#comment-{parent}"))
+}
+
+fn comment_url(comment: &Comment) -> String {
+	let article = comment.link_id.trim_start_matches("t3_");
+	format!("/comments/{article}/_/{}#comment-{}", comment.id, comment.id)
 }
 
 fn more_comments_url(children: &[String], link_id: &str, parent_id: &str, sort: &str) -> String {
@@ -844,7 +1098,7 @@ fn append_flat_comment(child: &CommentChild, children: &[CommentChild], link_id:
 
 	match child {
 		CommentChild::Comment(comment) => {
-			tree.push(CommentTreeEvent::Open(comment_view(&comment.data)));
+			tree.push(CommentTreeEvent::Open(Box::new(comment_view(&comment.data))));
 			let mut replies = Vec::new();
 			if let CommentReplies::Listing(listing) = &comment.data.replies {
 				append_comments(&listing.data.children, link_id, sort, &mut replies);
@@ -858,7 +1112,7 @@ fn append_flat_comment(child: &CommentChild, children: &[CommentChild], link_id:
 			tree.push(CommentTreeEvent::Close);
 		}
 		CommentChild::More(more) => {
-			tree.push(CommentTreeEvent::Open(more_view(&more.data, link_id, sort)));
+			tree.push(CommentTreeEvent::Open(Box::new(more_view(&more.data, link_id, sort))));
 			tree.push(CommentTreeEvent::Close);
 		}
 	}

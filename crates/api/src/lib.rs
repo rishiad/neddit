@@ -15,6 +15,7 @@ macro_rules! dbg_msg {
 
 pub mod api;
 pub mod client;
+pub mod feed;
 pub mod media;
 pub mod models;
 pub mod parsing;

@@ -1,11 +1,25 @@
 #![forbid(unsafe_code)]
 
-use axum::Router;
+pub mod config;
+
+use axum::{middleware, Router};
 use neddit_api::{api, server, server::MediaProxy, service::RedditService};
 
-pub fn router(service: RedditService, media: MediaProxy) -> Router {
-	let signer = media.signer().clone();
-	let api = api::with_json_aliases(api::with_reddit_urls(api::router(service.clone()), signer));
-	let api = server::with_middleware(Router::new().fallback_service(api));
-	neddit_web::router(service, media).fallback_service(api)
+pub fn router(service: RedditService, media: &MediaProxy, web_enabled: bool, api_enabled: bool) -> Router {
+	let mut app = if web_enabled {
+		neddit_web::router(service.clone(), media.clone())
+	} else {
+		server::with_middleware(server::router(media.clone())).merge(neddit_web::health_router())
+	};
+	if api_enabled {
+		app = app.merge(server::with_middleware(server::video_router(media.clone())));
+		let signer = media.signer().clone();
+		let api = api::with_json_aliases(api::with_reddit_urls(api::router(service), signer));
+		let api = server::with_middleware(Router::new().fallback_service(api));
+		app = app.fallback_service(api);
+	}
+	if web_enabled {
+		app = app.layer(middleware::from_fn(neddit_web::html_error_pages));
+	}
+	app
 }

@@ -1,4 +1,5 @@
 mod comment_query;
+mod content;
 mod duplicate_query;
 mod error;
 mod info_query;
@@ -21,6 +22,7 @@ mod wiki;
 mod wiki_page_query;
 
 pub use comment_query::{CommentQuery, CommentSort, CommentTheme};
+pub use content::ContentPolicy;
 pub use duplicate_query::{DuplicateQuery, DuplicateSort};
 pub use error::ServiceError;
 pub use info_query::InfoQuery;

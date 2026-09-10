@@ -21,6 +21,7 @@ pub struct ThreadCommentSearchQuery {
 impl RedditService {
 	pub async fn search_post_comments(&self, subreddit: &str, post_id: &str, query: &ThreadCommentSearchQuery, access: Access) -> Result<Vec<Comment>, ServiceError> {
 		validate_subreddit(subreddit)?;
+		self.require_safe_subreddit(subreddit, access).await?;
 		validate_id36("post_id", post_id)?;
 		let search = query.query.trim();
 		if search.is_empty() || search.chars().count() > 512 {

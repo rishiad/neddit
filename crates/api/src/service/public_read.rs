@@ -18,6 +18,7 @@ impl RedditService {
 
 	pub async fn search_subreddit(&self, subreddit: &str, query: &SearchQuery, access: Access) -> Result<Listing<PublicThing>, ServiceError> {
 		validate_subreddit(subreddit)?;
+		self.require_safe_subreddit(subreddit, access).await?;
 		self.search_listing(Some(subreddit), query, access).await
 	}
 
@@ -27,6 +28,7 @@ impl RedditService {
 
 	pub async fn subreddit_info(&self, subreddit: &str, query: &InfoQuery, access: Access) -> Result<Listing<PublicThing>, ServiceError> {
 		validate_subreddit(subreddit)?;
+		self.require_safe_subreddit(subreddit, access).await?;
 		self.info_listing(Some(subreddit), query, access).await
 	}
 
@@ -37,6 +39,7 @@ impl RedditService {
 		let json = self.client.json(path, access).await?;
 		let mut listing = parse_user_overview_listing(&json)?;
 		clear_public_listing_modhash(&mut listing);
+		self.content.filter_public(&mut listing);
 		Ok(listing)
 	}
 
@@ -47,6 +50,7 @@ impl RedditService {
 		let json = self.client.json(path, access).await?;
 		let mut listing = parse_post_listing(&json)?;
 		clear_listing_modhash(&mut listing);
+		self.content.filter_posts(&mut listing);
 		Ok(listing)
 	}
 
@@ -57,6 +61,7 @@ impl RedditService {
 		let json = self.client.json(path, access).await?;
 		let mut listing = parse_user_comment_listing(&json)?;
 		clear_public_listing_modhash(&mut listing);
+		self.content.filter_public(&mut listing);
 		Ok(listing)
 	}
 
@@ -72,6 +77,7 @@ impl RedditService {
 		let json = self.client.json(path, access).await?;
 		let mut listing = parse_subreddit_listing(&json)?;
 		clear_listing_modhash(&mut listing);
+		self.content.filter_subreddits(&mut listing);
 		Ok(listing)
 	}
 
@@ -81,18 +87,27 @@ impl RedditService {
 		let json = self.client.json(path, access).await?;
 		let mut listing = parse_user_listing(&json)?;
 		clear_listing_modhash(&mut listing);
+		self.content.filter_users(&mut listing);
 		Ok(listing)
 	}
 
 	async fn search_listing(&self, subreddit: Option<&str>, query: &SearchQuery, access: Access) -> Result<Listing<PublicThing>, ServiceError> {
 		validate_search_query(query)?;
+		if !self.content.allows_nsfw() && query.include_over_18 == Some(true) {
+			return Err(ServiceError::ContentBlocked);
+		}
+		let mut query = query.clone();
+		if !self.content.allows_nsfw() {
+			query.include_over_18 = Some(false);
+		}
 		let base = match subreddit {
 			Some(subreddit) => format!("/r/{subreddit}/search"),
 			None => "/search".to_string(),
 		};
-		let json = self.client.json(with_query(base, encode_search_query(query)), access).await?;
+		let json = self.client.json(with_query(base, encode_search_query(&query)), access).await?;
 		let mut listing = parse_search_listing(&json)?;
 		clear_listing_modhash(&mut listing);
+		self.content.filter_public(&mut listing);
 		Ok(listing)
 	}
 
@@ -105,6 +120,7 @@ impl RedditService {
 		let json = self.client.json(with_query(base, encode_info_query(query)), access).await?;
 		let mut listing = parse_info_listing(&json)?;
 		clear_public_listing_modhash(&mut listing);
+		self.content.filter_public(&mut listing);
 		Ok(listing)
 	}
 }

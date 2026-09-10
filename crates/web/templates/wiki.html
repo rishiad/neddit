@@ -10,17 +10,25 @@
 {% endblock %}
 
 {% block content %}
-  <div class="wiki-layout">
+  <div class="wiki-layout{% if wiki.generated %} generated-wiki-layout{% endif %}">
     <article class="wiki-article">
-      <header>
-        <div class="wiki-kicker">{{ community.display_name_prefixed }} wiki</div>
+      {% if !wiki.generated %}<header>
         <h1>{{ wiki.title }}</h1>
         {% if wiki.show_revision %}<p>Revised {{ wiki.revision_age }}</p>{% endif %}
-      </header>
-      <div class="wiki-content rich-text">{{ wiki.content_html|safe }}</div>
+      </header>{% endif %}
+      {% if wiki.generated %}
+        <div class="wiki-content rich-text generated-wiki-content">
+          <h2>Pages</h2>
+          <nav class="wiki-index generated-wiki-index" aria-label="Wiki pages">
+            {% for link in wiki.links %}<a href="{{ link.href }}">{{ link.label }}</a>{% endfor %}
+          </nav>
+        </div>
+      {% else %}
+        <div class="wiki-content rich-text">{{ wiki.content_html|safe }}</div>
+      {% endif %}
     </article>
 
-    <aside class="wiki-sidebar">
+    {% if !wiki.generated %}<aside class="wiki-sidebar">
       <details class="community-panel" open>
         <summary>Wiki pages</summary>
         <nav class="wiki-index" aria-label="Wiki pages">
@@ -29,6 +37,6 @@
           {% endfor %}
         </nav>
       </details>
-    </aside>
+    </aside>{% endif %}
   </div>
 {% endblock %}

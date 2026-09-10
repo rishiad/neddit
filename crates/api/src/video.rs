@@ -458,6 +458,8 @@ fn host_is(host: &str, domain: &str) -> bool {
 
 #[derive(Debug, Error)]
 pub enum VideoError {
+	#[error("hosted video is disabled")]
+	Disabled,
 	#[error("invalid video URL")]
 	InvalidUrl,
 	#[error("unsupported video provider")]
@@ -493,6 +495,7 @@ pub enum VideoError {
 impl IntoResponse for VideoError {
 	fn into_response(self) -> Response {
 		let status = match self {
+			Self::Disabled => StatusCode::NOT_FOUND,
 			Self::InvalidUrl | Self::UnsupportedProvider => StatusCode::BAD_REQUEST,
 			Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
 			Self::Signature(MediaUrlError::InvalidSignature | MediaUrlError::ForbiddenTarget) | Self::ForbiddenTarget => StatusCode::FORBIDDEN,

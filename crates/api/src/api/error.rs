@@ -38,6 +38,7 @@ fn service_status(error: &ServiceError) -> StatusCode {
 		| ServiceError::InvalidCursor { .. }
 		| ServiceError::InvalidLimit { .. }
 		| ServiceError::InvalidParameter { .. } => StatusCode::BAD_REQUEST,
+		ServiceError::ContentBlocked => StatusCode::NOT_FOUND,
 		ServiceError::Parse(_) | ServiceError::InvalidThreadCommentSearch => StatusCode::BAD_GATEWAY,
 		Client(ClientError::Unauthorized) => StatusCode::UNAUTHORIZED,
 		Client(ClientError::Quarantined | ClientError::Gated | ClientError::Private | ClientError::Banned | ClientError::Suspended) => StatusCode::FORBIDDEN,

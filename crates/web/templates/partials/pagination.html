@@ -2,13 +2,13 @@
   <nav class="pagination" aria-label="Pagination">
     <span class="pagination-previous">
       {% if pagination.has_previous %}
-        <a href="{{ pagination.previous_url }}" rel="prev"><span aria-hidden="true">←</span> Previous page</a>
+        <a href="{{ pagination.previous_url }}" rel="prev"><span aria-hidden="true">←</span> Previous<span class="pagination-long"> page</span></a>
       {% endif %}
     </span>
     <span class="pagination-page" aria-current="page">Page {{ pagination.page }}</span>
     <span class="pagination-next">
       {% if pagination.has_next %}
-        <a href="{{ pagination.next_url }}" rel="next">Next page <span aria-hidden="true">→</span></a>
+        <a href="{{ pagination.next_url }}" rel="next">Next<span class="pagination-long"> page</span> <span aria-hidden="true">→</span></a>
       {% endif %}
     </span>
   </nav>

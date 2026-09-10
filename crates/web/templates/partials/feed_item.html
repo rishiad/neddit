@@ -1,17 +1,18 @@
 <li class="story{% if item.stickied %} story-pinned{% endif %}">
-  <div class="score" aria-label="{{ item.score }} points">
-    <strong>{{ item.score }}</strong>
-  </div>
+  <div class="score" aria-label="{{ item.score }} points"><strong>{{ item.score }}</strong></div>
   <article class="story-body">
     <div class="title-line">
       <a class="story-title" href="{{ item.href }}">{{ item.title }}</a>
       {% if item.show_domain %}<span class="domain">({{ item.domain }})</span>{% endif %}
+      {% match item.flair %}{% when Some with (flair) %}<a class="post-flair" href="{{ flair.href }}">{{ flair.text }}</a>{% when None %}{% endmatch %}
       {% for badge in item.badges %}<span class="badge">{{ badge }}</span>{% endfor %}
     </div>
     <div class="metadata">
-      <span>by {{ item.author }}</span>
+      <span class="mobile-metric">{{ item.score }} points</span>
+      {% if item.author_url.is_empty() %}<span>by {{ item.author }}</span>{% else %}<a href="{{ item.author_url }}">by {{ item.author }}</a>{% endif %}
       <span>{{ item.age }}</span>
       <a href="{{ item.permalink }}">{{ item.comments }} comments</a>
+      {% if item.show_subreddit %}<a href="/r/{{ item.subreddit }}">in r/{{ item.subreddit }}</a>{% endif %}
     </div>
   </article>
 </li>

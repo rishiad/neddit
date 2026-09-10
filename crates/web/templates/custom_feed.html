@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}{% if mode.is_builder() %}Feeds{% else %}Custom feed{% endif %} · Neddit{% endblock %}
+
+{% block content %}
+  {% if mode.is_builder() %}
+    <section class="feed-builder" aria-label="Feed builder">
+      <form class="search-form feed-form" action="/feeds" method="get">
+        <div class="feed-field">
+          <label for="feed-q">Feed Query:</label>
+          <input id="feed-q" name="q" type="search" value="{{ query }}" maxlength="4096"
+                 placeholder="subreddit:(rust OR programming) !flair:Help" autocapitalize="off" required>
+        </div>
+        {% include "feed_pool.html" %}
+        <div class="feed-field">
+          <label for="feed-rank">Rank By:</label>
+          <input id="feed-rank" name="rank" type="text" value="{{ rank }}" maxlength="512" list="feed-ranking-presets"
+                 placeholder="preset or ranking expression" autocapitalize="off">
+        </div>
+        <datalist id="feed-ranking-presets">
+          <option value="new"></option>
+          <option value="top"></option>
+          <option value="hot"></option>
+          <option value="discussion"></option>
+          <option value="divisive"></option>
+        </datalist>
+        <div class="feed-field">
+          <label for="feed-limit">Posts per page:</label>
+          <select id="feed-limit" name="limit">
+            {% for choice in limits %}<option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
+          </select>
+        </div>
+        {% if nsfw_available %}<label class="feed-checkbox"><input type="checkbox" name="include_nsfw" value="true"{% if include_nsfw %} checked{% endif %}> Include NSFW posts</label>{% endif %}
+        <button class="feed-submit" type="submit">Build Feed</button>
+      </form>
+    </section>
+  {% endif %}
+
+  {% if !diagnostic.is_empty() %}<p role="alert">{{ diagnostic }}</p>{% endif %}
+
+  {% if searched %}
+    <section class="custom-feed" aria-label="Feed preview">
+      {% if !share_url.is_empty() && mode.is_builder() %}
+        <section class="feed-share" aria-label="Shareable feed URL">
+          <label class="visually-hidden" for="feed-share-url">Shareable feed URL</label>
+          <input id="feed-share-url" type="text" value="{{ share_url }}" readonly>
+        </section>
+      {% endif %}
+      {% if result_count == 0 %}<p class="comments-empty">No posts matched the feed filters.</p>{% endif %}
+      {% include "partials/feed_list.html" %}
+    </section>
+  {% endif %}
+{% endblock %}

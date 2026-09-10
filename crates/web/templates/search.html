@@ -6,7 +6,7 @@
   <form class="search-form" action="/search" method="get">
     <div class="search-query">
       <label class="visually-hidden" for="search-q">Search query</label>
-      <input id="search-q" name="q" type="search" value="{{ query }}" maxlength="4096" aria-describedby="ql-help" autocapitalize="off" autofocus required>
+      <input id="search-q" name="q" type="search" value="{{ query }}" maxlength="4096" aria-describedby="ql-help" autocapitalize="off" required>
       <button type="submit">Search</button>
     </div>
 
@@ -24,7 +24,7 @@
 
       {% include "search_sorts.html" %}
 
-      <label><input type="checkbox" name="include_nsfw" value="true"{% if include_nsfw %} checked{% endif %}> Include NSFW results</label>
+      {% if nsfw_available %}<label><input type="checkbox" name="include_nsfw" value="true"{% if include_nsfw %} checked{% endif %}> Include NSFW results</label>{% endif %}
 
       <label>Results per page
         <select name="limit">
@@ -49,34 +49,7 @@
           <p class="comments-empty">This search has no further confirmed matches within its budget.</p>
         {% endif %}
       {% else %}
-        <ol class="feed" aria-label="Search results">
-          {% for result in results %}
-            <li class="story search-result" data-fullname="{{ result.fullname }}">
-              <div class="score" aria-label="{{ result.metric }} {{ result.metric_label }}">{{ result.metric }}</div>
-              <article class="story-body">
-                <div class="title-line">
-                  <a class="story-title" href="{{ result.href }}">{{ result.title }}</a>
-                  {% match result.domain %}
-                    {% when Some with (domain) %}<span class="domain">({{ domain }})</span>
-                    {% when None %}
-                  {% endmatch %}
-                </div>
-                {% match result.summary %}
-                  {% when Some with (summary) %}<p class="search-summary">{{ summary }}</p>
-                  {% when None %}
-                {% endmatch %}
-                <div class="metadata">
-                  {% for metadata in result.metadata %}
-                    {% match metadata.href %}
-                      {% when Some with (href) %}<a href="{{ href }}">{{ metadata.text }}</a>
-                      {% when None %}<span>{{ metadata.text }}</span>
-                    {% endmatch %}
-                  {% endfor %}
-                </div>
-              </article>
-            </li>
-          {% endfor %}
-        </ol>
+        {% include "partials/result_list.html" %}
       {% endif %}
       {% include "partials/pagination.html" %}
     </section>

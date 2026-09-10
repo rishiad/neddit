@@ -1,9 +1,9 @@
 <nav class="sort-controls" aria-label="{{ controls.label }}">
-  <form action="{{ controls.action }}" method="get">
+  <form action="{{ controls.action }}" method="get" hx-boost="true" hx-trigger="change">
     {% if !controls.query.is_empty() %}<input type="hidden" name="q" value="{{ controls.query }}">{% endif %}
     <label>
       <span class="visually-hidden">{{ controls.choice_label }}</span>
-      <select name="sort" data-submit-on-change>
+      <select name="sort">
         {% for choice in controls.sorts %}
           <option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>
         {% endfor %}
@@ -12,11 +12,11 @@
     <noscript><button type="submit">Apply sort</button></noscript>
   </form>
   {% if !controls.times.is_empty() %}
-    <form action="{{ controls.action }}" method="get">
+    <form action="{{ controls.action }}" method="get" hx-boost="true" hx-trigger="change">
       <input type="hidden" name="sort" value="top">
       <label>
         <span class="visually-hidden">Top posts from</span>
-        <select name="t" data-submit-on-change>
+        <select name="t">
           {% for choice in controls.times %}
             <option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>
           {% endfor %}

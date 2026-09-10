@@ -8,6 +8,7 @@ use crate::service::{RedditService, ServiceError};
 impl RedditService {
 	pub async fn subreddit_rules(&self, subreddit: &str, access: Access) -> Result<SubredditRules, ServiceError> {
 		validate_subreddit(subreddit)?;
+		self.require_safe_subreddit(subreddit, access).await?;
 		let json = self.client.json(format!("/r/{subreddit}/about/rules"), access).await?;
 		Ok(parse_subreddit_rules(&json)?)
 	}

@@ -1,9 +1,12 @@
 #![forbid(unsafe_code)]
 
 mod app;
+mod custom_feed;
 mod error;
 mod search;
 mod view;
+
+pub use error::html_error_pages;
 
 use axum::{
 	extract::FromRef,
@@ -51,18 +54,22 @@ impl FromRef<WebState> for MediaProxy {
 }
 
 pub fn router(service: RedditService, media: MediaProxy) -> Router {
+	let video_enabled = media.video_enabled();
 	let state = WebState {
 		service,
 		signer: media.signer().clone(),
 		media: media.clone(),
 	};
-	let app = Router::new()
+	let mut app = Router::new()
 		.route("/", get(app::front_page))
+		.route("/feeds", get(custom_feed::builder))
+		.route("/feed", get(custom_feed::page))
 		.route("/search", get(search::page))
 		.route("/more-comments", get(app::more_comments))
-		.route("/video/player", get(app::video_player))
 		.route("/gallery/{article}/{index}", get(app::gallery))
 		.route("/post-content/{article}", get(app::post_content))
+		.route("/user/{username}", get(app::user_posts))
+		.route("/user/{username}/comments", get(app::user_comments))
 		.route("/r/{subreddit}", get(app::subreddit_feed))
 		.route("/r/{subreddit}/wiki", get(app::wiki_root))
 		.route("/r/{subreddit}/wiki/", get(app::wiki_root))
@@ -74,7 +81,11 @@ pub fn router(service: RedditService, media: MediaProxy) -> Router {
 		.route("/r/{subreddit}/comments/{article}", get(app::subreddit_post_comments))
 		.route("/r/{subreddit}/comments/{article}/{slug}", get(app::subreddit_post_permalink))
 		.route("/r/{subreddit}/comments/{article}/{slug}/", get(app::subreddit_post_permalink))
-		.route("/r/{subreddit}/comments/{article}/{slug}/{comment}", get(app::subreddit_post_comment_permalink))
+		.route("/r/{subreddit}/comments/{article}/{slug}/{comment}", get(app::subreddit_post_comment_permalink));
+	if video_enabled {
+		app = app.route("/video/player", get(app::video_player));
+	}
+	let app = app
 		.with_state(state)
 		.merge(system_routes())
 		.merge(neddit_api::server::with_middleware(neddit_api::server::router(media)));
@@ -87,11 +98,14 @@ pub fn router(service: RedditService, media: MediaProxy) -> Router {
 }
 
 fn system_routes() -> Router {
-	Router::new()
-		.route("/healthz", get(health))
+	health_router()
 		.route("/assets/app.css", get(stylesheet))
-		.route("/assets/app.js", get(javascript))
+		.route("/feeds/controls", get(custom_feed::controls))
 		.route("/search/controls", get(search::controls))
+}
+
+pub fn health_router() -> Router {
+	Router::new().route("/healthz", get(health))
 }
 
 async fn health() -> StatusCode {
@@ -105,19 +119,16 @@ async fn stylesheet() -> impl IntoResponse {
 	)
 }
 
-async fn javascript() -> impl IntoResponse {
-	(
-		[(header::CONTENT_TYPE, "text/javascript; charset=utf-8"), (header::CACHE_CONTROL, "no-cache")],
-		include_str!("../assets/app.js"),
-	)
-}
-
 async fn security_headers(request: axum::extract::Request, next: Next) -> Response {
 	let mut response = next.run(request).await;
+	set_security_headers(&mut response);
+	response
+}
+
+fn set_security_headers(response: &mut Response) {
 	let headers = response.headers_mut();
 	headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(CONTENT_SECURITY_POLICY));
 	headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
 	headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-	response
 }
 

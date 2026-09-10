@@ -9,7 +9,7 @@
 {% endblock %}
 
 {% block content %}
-  <article class="post-entry">
+  <article id="post" class="post-entry">
     <div class="post-detail">
       <div class="post-score" aria-label="{{ post.item.score }} points">
         <strong>{{ post.item.score }}</strong>
@@ -17,12 +17,14 @@
       <div class="post-title">
         <h1>
           <a href="{{ post.item.href }}">{{ post.item.title }}</a>
+          {% match post.item.flair %}{% when Some with (flair) %}<a class="post-flair" href="{{ flair.href }}">{{ flair.text }}</a>{% when None %}{% endmatch %}
           {% for badge in post.item.badges %}<span class="badge">{{ badge }}</span>{% endfor %}
         </h1>
       </div>
       {% if post.item.show_domain %}<span class="post-domain">({{ post.item.domain }})</span>{% endif %}
       <div class="metadata post-metadata">
-        <span>by {{ post.item.author }}</span>
+        <span class="mobile-metric">{{ post.item.score }} points</span>
+        {% if post.item.author_url.is_empty() %}<span>by {{ post.item.author }}</span>{% else %}<a href="{{ post.item.author_url }}">by {{ post.item.author }}</a>{% endif %}
         <span>{{ post.item.age }}</span>
       </div>
     </div>

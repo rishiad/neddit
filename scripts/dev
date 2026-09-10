@@ -7,4 +7,4 @@ exec cargo watch \
   --watch crates/api \
   --watch Cargo.toml \
   --watch Cargo.lock \
-  --exec 'run -p neddit --locked'
+  --exec 'run -p neddit --locked -- --config "$PWD/config.toml"'

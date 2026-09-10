@@ -11,12 +11,14 @@ use uuid::Uuid;
 impl RedditService {
 	pub async fn wiki_pages(&self, subreddit: &str, access: Access) -> Result<WikiPageListing, ServiceError> {
 		validate_subreddit(subreddit)?;
+		self.require_safe_subreddit(subreddit, access).await?;
 		let json = self.client.json(format!("/r/{subreddit}/wiki/pages"), access).await?;
 		Ok(parse_wiki_page_listing(&json)?)
 	}
 
 	pub async fn wiki_page(&self, subreddit: &str, page: &str, query: &WikiPageQuery, access: Access) -> Result<WikiPage, ServiceError> {
 		validate_subreddit(subreddit)?;
+		self.require_safe_subreddit(subreddit, access).await?;
 		let page = encode_wiki_page(page)?;
 		validate_wiki_page_query(query)?;
 		let path = with_query(format!("/r/{subreddit}/wiki/{page}"), encode_wiki_page_query(query));
@@ -26,6 +28,7 @@ impl RedditService {
 
 	pub async fn wiki_revisions(&self, subreddit: &str, page: Option<&str>, query: &ListingQuery, access: Access) -> Result<Listing<WikiRevision>, ServiceError> {
 		validate_subreddit(subreddit)?;
+		self.require_safe_subreddit(subreddit, access).await?;
 		validate_wiki_listing_query(query)?;
 		let base = match page {
 			Some(page) => format!("/r/{subreddit}/wiki/revisions/{}", encode_wiki_page(page)?),
@@ -40,12 +43,14 @@ impl RedditService {
 
 	pub async fn wiki_discussions(&self, subreddit: &str, page: &str, query: &ListingQuery, access: Access) -> Result<Listing<Thing<Post>>, ServiceError> {
 		validate_subreddit(subreddit)?;
+		self.require_safe_subreddit(subreddit, access).await?;
 		validate_listing_query(query)?;
 		let page = encode_wiki_page(page)?;
 		let path = with_query(format!("/r/{subreddit}/wiki/discussions/{page}"), encode_listing_query(query));
 		let json = self.client.json(path, access).await?;
 		let mut listing = parse_wiki_discussions(&json)?;
 		clear_listing_modhash(&mut listing);
+		self.content.filter_posts(&mut listing);
 		Ok(listing)
 	}
 }

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}u/{{ profile.name }} · Neddit{% endblock %}
+
+{% block content %}
+  <header class="user-heading">
+    <h1>u/{{ profile.name }}</h1>
+    {% match profile.description %}
+      {% when Some with (description) %}<p>{{ description }}</p>
+      {% when None %}
+    {% endmatch %}
+    <div class="metadata">
+      <span>{{ profile.karma }}</span>
+      <span>{{ profile.joined }}</span>
+    </div>
+  </header>
+
+  <nav class="user-sections" aria-label="User activity">
+    <a{% if posts_active %} class="active" aria-current="page"{% endif %} href="{{ posts_url }}">Posts</a>
+    <a{% if comments_active %} class="active" aria-current="page"{% endif %} href="{{ comments_url }}">Comments</a>
+  </nav>
+
+  <div class="user-sort">
+    {% include "partials/sort_controls.html" %}
+  </div>
+
+  <section class="user-results" aria-label="u/{{ profile.name }} activity">
+    {% if results.is_empty() %}
+      <p class="comments-empty">No visible activity.</p>
+    {% else %}
+      {% include "partials/result_list.html" %}
+    {% endif %}
+    {% include "partials/pagination.html" %}
+  </section>
+{% endblock %}

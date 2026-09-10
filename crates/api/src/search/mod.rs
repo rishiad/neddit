@@ -2,6 +2,7 @@
 mod engine;
 pub use engine::{Page, Request, Sessions};
 
+use crate::models::Post;
 use caseless::Caseless;
 use chrono::{DateTime, NaiveDate};
 use regex::Regex;
@@ -48,7 +49,7 @@ pub struct Diagnostic {
 	pub end: usize,
 }
 impl Diagnostic {
-	fn new(code: &'static str, message: impl Into<String>, span: (usize, usize)) -> Self {
+	pub(crate) fn new(code: &'static str, message: impl Into<String>, span: (usize, usize)) -> Self {
 		Self {
 			code,
 			message: message.into(),
@@ -496,6 +497,57 @@ pub struct Record {
 	pub fields: HashMap<Field, Datum>,
 	pub text: Vec<Datum>,
 	pub created: Option<i128>,
+}
+
+pub(crate) fn body(value: &str) -> Datum {
+	if matches!(
+		value.trim().to_ascii_lowercase().as_str(),
+		"[deleted]" | "[removed]" | "[removed by reddit]" | "[ removed by moderator ]"
+	) {
+		Datum::Unknown
+	} else {
+		Datum::Text(value.into())
+	}
+}
+
+pub(crate) fn author(value: &str) -> Datum {
+	if value == "[deleted]" {
+		Datum::Absent
+	} else if value.is_empty() {
+		Datum::Unknown
+	} else {
+		Datum::Text(value.into())
+	}
+}
+
+pub(crate) fn optional(extra: &serde_json::Map<String, serde_json::Value>, key: &str) -> Datum {
+	match extra.get(key) {
+		Some(serde_json::Value::Null) => Datum::Absent,
+		Some(serde_json::Value::String(value)) => Datum::Text(value.clone()),
+		_ => Datum::Unknown,
+	}
+}
+
+pub(crate) fn seconds(value: f64) -> Option<i128> {
+	(value.is_finite() && (0.0..253402300800.0).contains(&value)).then_some((value * 1_000_000_000.0).round() as i128)
+}
+
+pub(crate) fn post_record(post: &Post) -> Record {
+	let mut record = Record::default();
+	record.fields.insert(Field::Title, body(&post.title));
+	record.fields.insert(Field::Subreddit, Datum::Text(post.subreddit.clone()));
+	record.fields.insert(Field::Author, author(&post.author));
+	record.fields.insert(Field::Flair, optional(&post.extra, "link_flair_text"));
+	record.fields.insert(
+		Field::Domain,
+		url::Url::parse(&post.url)
+			.ok()
+			.and_then(|url| url.host_str().map(str::to_owned))
+			.map_or(Datum::Unknown, Datum::Text),
+	);
+	record.text = vec![body(&post.title), body(&post.selftext)];
+	record.created = seconds(post.created_utc);
+	record
 }
 impl Expr {
 	pub fn evaluate(&self, record: &Record, frozen: i128) -> Truth {

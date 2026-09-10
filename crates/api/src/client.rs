@@ -1,7 +1,7 @@
 pub mod error;
 mod oauth;
 
-use crate::media::rewrite_reddit_navigation;
+use crate::media::DomainPolicy;
 use axum::{body::Body, http::HeaderMap, response::Response};
 use futures_lite::{future::Boxed, FutureExt};
 use log::{error, info, trace};
@@ -57,6 +57,7 @@ impl Access {
 pub struct RedditClient {
 	http: WreqClient,
 	oauth: OAuthHandle,
+	domains: DomainPolicy,
 }
 
 struct UpstreamResponse {
@@ -67,9 +68,13 @@ struct UpstreamResponse {
 
 impl RedditClient {
 	pub async fn new() -> Result<Self, ClientError> {
+		Self::with_domains(DomainPolicy::default()).await
+	}
+
+	pub async fn with_domains(domains: DomainPolicy) -> Result<Self, ClientError> {
 		let http = Self::build_http_client()?;
 		let oauth = OAuthHandle::start(http.clone()).await?;
-		Ok(Self { http, oauth })
+		Ok(Self { http, oauth, domains })
 	}
 
 	pub async fn shutdown(&self) {
@@ -154,7 +159,7 @@ impl RedditClient {
 
 					// OAuth endpoints can return absolute Reddit URLs. Keep canonical
 					// resolution inside this service rather than redirecting to Reddit.
-					let uri = rewrite_reddit_navigation(stripped_uri).unwrap_or_else(|| stripped_uri.to_string());
+					let uri = self.domains.rewrite_navigation(stripped_uri).unwrap_or_else(|| stripped_uri.to_string());
 
 					// Decrement tries and try again
 					self.canonical_path(uri, tries - 1).await

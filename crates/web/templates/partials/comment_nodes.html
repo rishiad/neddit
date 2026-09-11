@@ -20,16 +20,18 @@
         {% else %}
           <input class="comment-folder-button" id="comment-folder-{{ comment.id }}" type="checkbox">
           <article class="comment" id="comment-{{ comment.id }}">
-            <div class="comment-voters" aria-label="{{ comment.score }} points">
+            <div class="comment-voters">
               <label class="comment-folder" for="comment-folder-{{ comment.id }}" aria-label="Toggle comment by {{ comment.author }}"></label>
-              <span class="comment-score">{{ comment.score }}</span>
             </div>
             <header class="comment-meta">
-              {% if comment.author_url.is_empty() %}<span>{{ comment.author }}</span>{% else %}<a href="{{ comment.author_url }}">{{ comment.author }}</a>{% endif %}
-              <p>{{ comment.age }}</p>
-              <a href="{{ comment.permalink }}">permalink</a>
-              <a href="{{ comment.parent_url }}">parent</a>
-              <span class="comment-mobile-score">{{ comment.score }} points</span>
+              <div class="comment-byline">
+                {% if comment.author_url.is_empty() %}<span>{{ comment.author }}</span>{% else %}<a href="{{ comment.author_url }}">{{ comment.author }}</a>{% endif %}
+                <span class="comment-stats"><span>{{ comment.age }}</span><span>{{ comment.score }} points</span></span>
+              </div>
+              <div class="comment-actions">
+                <a href="{{ comment.permalink }}">permalink</a>
+                <a href="{{ comment.parent_url }}">parent</a>
+              </div>
               <label class="comment-row-folder" for="comment-folder-{{ comment.id }}" aria-label="Toggle comment by {{ comment.author }}"></label>
             </header>
             <div class="comment-body rich-text" role="heading" aria-level="3">{{ comment.body_html|safe }}</div>

@@ -25,6 +25,8 @@ pub(super) const WIKI: &str = "See the [Reddit wiki documentation](https://www.r
 	paths(
 		crate::api::ql_search,
 		crate::api::custom_feed,
+		crate::api::create_feed,
+		crate::api::saved_feed,
 		crate::server::resolve_video,
 		crate::api::routes::wiki_page,
 		crate::api::routes::wiki_page_revisions,

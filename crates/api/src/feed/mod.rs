@@ -1,5 +1,7 @@
-//! Stateless custom post feeds backed by bounded native Reddit listings.
+//! Custom post feeds with immutable definitions and bounded snapshots.
 mod ranking;
+mod shortlinks;
+pub use shortlinks::{status, Continuation, Definition, SavedFeed};
 
 use crate::{
 	client::Access,
@@ -57,7 +59,7 @@ pub const RANKING_INPUTS: &[&str] = &[
 	"archived",
 ];
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, utoipa::IntoParams)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, utoipa::IntoParams, utoipa::ToSchema)]
 #[into_params(parameter_in = Query)]
 #[serde(default, deny_unknown_fields)]
 pub struct Request {
@@ -73,8 +75,8 @@ pub struct Request {
 	pub limit: Option<u8>,
 	#[param(minimum = 1)]
 	pub page: Option<u32>,
-	/// Unix timestamp that freezes relative dates and age inputs across stateless page requests.
-	pub frozen: Option<i64>,
+	/// Opaque snapshot identifier returned by the first page. Expires after 15 minutes or eviction.
+	pub cursor: Option<String>,
 	pub include_nsfw: bool,
 }
 
@@ -100,7 +102,7 @@ impl Request {
 	}
 }
 
-#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct FeedPage {
 	pub items: Vec<Item>,
 	pub number: u32,
@@ -111,18 +113,18 @@ pub struct FeedPage {
 	pub candidates_inspected: usize,
 	pub observed_matches: usize,
 	pub frozen_at: String,
-	pub frozen: i64,
+	pub cursor: Option<String>,
 	pub coverage: Vec<String>,
-	pub text_profile: &'static str,
+	pub text_profile: String,
 }
 
-#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct Item {
 	pub post: Thing<Post>,
 	pub signals: RankingSignals,
 }
 
-#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct RankingSignals {
 	pub score: i64,
 	pub upvote_ratio: f64,
@@ -147,17 +149,17 @@ pub struct RankingSignals {
 	pub rank_value: Option<f64>,
 }
 
-#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct RankingDescription {
 	pub name: String,
 	pub expression: Option<String>,
-	pub direction: &'static str,
-	pub inputs: &'static [&'static str],
+	pub direction: String,
+	pub inputs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct SourceDescription {
-	pub kind: &'static str,
+	pub kind: String,
 	pub value: String,
 }
 
@@ -219,11 +221,11 @@ impl Source {
 	fn description(&self) -> SourceDescription {
 		match self {
 			Self::Subreddits(names) => SourceDescription {
-				kind: "subreddits",
+				kind: "subreddits".into(),
 				value: names.join("+"),
 			},
 			Self::Author(name) => SourceDescription {
-				kind: "author",
+				kind: "author".into(),
 				value: name.clone(),
 			},
 		}
@@ -350,8 +352,8 @@ impl Ranking {
 		RankingDescription {
 			name: self.name.clone(),
 			expression: Some(self.expression.clone()),
-			direction: "descending",
-			inputs: RANKING_INPUTS,
+			direction: "descending".into(),
+			inputs: RANKING_INPUTS.iter().map(|s| (*s).into()).collect(),
 		}
 	}
 }
@@ -398,11 +400,18 @@ struct Collection {
 
 impl RedditService {
 	pub async fn custom_feed(&self, request: &Request) -> Result<FeedPage, Diagnostic> {
+		tokio::time::timeout(DEADLINE, self.cached_feed(request))
+			.await
+			.map_err(|_| Diagnostic::new("execution_timeout", "Feed deadline exceeded: 20 seconds", (0, 0)))?
+	}
+
+	async fn cached_feed(&self, request: &Request) -> Result<FeedPage, Diagnostic> {
 		if !self.content.allows_nsfw() && request.include_nsfw {
 			return Err(Diagnostic::new("content_blocked", "NSFW content is disabled by server policy", (0, 0)));
 		}
-		if !(1..=100).contains(&request.limit()) {
-			return Err(Diagnostic::new("invalid_value", "Feed page size must be between 1 and 100", (0, 0)));
+		let definition = request.definition()?;
+		if request.page() == 0 {
+			return Err(Diagnostic::new("invalid_value", "Feed page must be positive", (0, 0)));
 		}
 		let start = request
 			.page()
@@ -411,15 +420,70 @@ impl RedditService {
 			.and_then(|value| usize::try_from(value).ok())
 			.filter(|value| *value < MAX_CANDIDATES)
 			.ok_or_else(|| Diagnostic::new("invalid_value", "Feed page starts beyond the 400-candidate window", (0, 0)))?;
+		let binding = crate::storage::fingerprint(format!("feed-v1:{TEXT_PROFILE}:{}:{}", self.allows_nsfw(), definition.canonical()).as_bytes());
+		let snapshot_key = |cursor: &str| format!("snapshot:{binding}:{cursor}");
+		if let Some(cursor) = &request.cursor {
+			if cursor.len() != 24 || !cursor.bytes().all(|b| b.is_ascii_alphanumeric()) {
+				return Err(expired_cursor());
+			}
+			let bytes = match &self.cache {
+				Some(cache) => cache.get(&snapshot_key(cursor)).await,
+				None => None,
+			}
+			.ok_or_else(expired_cursor)?;
+			let page = serde_json::from_slice(&bytes).map_err(|_| expired_cursor())?;
+			return Ok(slice_page(page, request, start));
+		}
+		if request.page() != 1 {
+			return Err(expired_cursor());
+		}
+		let _flight = self.feed_flights.lock(&binding).await;
+		let head_key = format!("feed-head:{binding}");
+		if let Some(cache) = &self.cache {
+			if let Some(head) = cache.get(&head_key).await {
+				if let Ok(cursor) = String::from_utf8(head) {
+					if let Some(bytes) = cache.get(&snapshot_key(&cursor)).await {
+						if let Ok(page) = serde_json::from_slice(&bytes) {
+							return Ok(slice_page(page, request, start));
+						}
+					}
+				}
+			}
+		}
+		let _permit = self
+			.feed_gate
+			.acquire()
+			.await
+			.map_err(|_| Diagnostic::new("execution_busy", "Feed executor unavailable", (0, 0)))?;
+		let mut page = self.build_feed(request).await?;
+		if let Some(cache) = &self.cache {
+			let cursor = crate::storage::id(24);
+			page.cursor = Some(cursor.clone());
+			let payload = serde_json::to_vec(&page).map_err(|_| Diagnostic::new("execution_busy", "Cannot serialize feed snapshot", (0, 0)))?;
+			match cache.put(snapshot_key(&cursor), payload, 900).await {
+				Ok(()) => {
+					let _ = cache.put(head_key, cursor.into_bytes(), 30).await;
+				}
+				Err(error) => {
+					log::warn!("feed snapshot: {error}");
+					page.cursor = None;
+				}
+			}
+		}
+		if page.cursor.is_none() {
+			page.coverage.push("Snapshot storage unavailable; pagination is disabled. Retry the first page.".into());
+		}
+		Ok(slice_page(page, request, start))
+	}
+
+	async fn build_feed(&self, request: &Request) -> Result<FeedPage, Diagnostic> {
 		let expression = parse(&request.q, Mode::Posts)?;
 		let pool = CandidatePool::parse(request, expression.span)?;
 		let sources = plan(&expression)?;
 		let ranking = Ranking::resolve(request)?;
-		let frozen = frozen_time(request.frozen)?;
+		let frozen = std::time::SystemTime::now().into();
 		let execution = collect(self, request, &expression, &sources, pool, frozen);
-		let mut collection = tokio::time::timeout(DEADLINE, execution)
-			.await
-			.map_err(|_| Diagnostic::new("execution_timeout", "Feed deadline exceeded: 20 seconds", expression.span))??;
+		let mut collection = execution.await?;
 
 		let frozen_ns = timestamp_ns(frozen);
 		for candidate in &mut collection.candidates {
@@ -436,22 +500,17 @@ impl RedditService {
 		});
 
 		let total = collection.candidates.len();
-		let end = start.saturating_add(usize::from(request.limit())).min(total);
-		let items = if start < total {
-			collection
-				.candidates
-				.drain(start..end)
-				.map(|candidate| Item {
-					post: candidate.post,
-					signals: candidate.signals,
-				})
-				.collect()
-		} else {
-			Vec::new()
-		};
+		let items = collection
+			.candidates
+			.into_iter()
+			.map(|candidate| Item {
+				post: candidate.post,
+				signals: candidate.signals,
+			})
+			.collect();
 		let mut coverage = vec![
 			"Feed discovery inspects at most 400 posts across bounded native Reddit listings; observed matches are not an exact total.".into(),
-			"Stateless pages refetch their candidate window. Reddit updates can move or remove posts between page requests.".into(),
+			"Pages use one immutable snapshot. Its cursor expires after 15 minutes or cache eviction.".into(),
 		];
 		if collection.bounded || !collection.all_sources_exhausted {
 			coverage.push("At least one source had more posts outside its allocated candidate window.".into());
@@ -465,19 +524,36 @@ impl RedditService {
 		coverage.push("Scores, ratios, awards, and crosspost counts are mutable Reddit observations; visible vote scores may be fuzzed.".into());
 		Ok(FeedPage {
 			items,
-			number: request.page(),
-			previous_page: (request.page() > 1).then(|| request.page() - 1),
-			next_page: (end < total).then(|| request.page() + 1),
+			number: 1,
+			previous_page: None,
+			next_page: None,
 			ranking: ranking.description(),
 			sources: sources.iter().map(Source::description).collect(),
 			candidates_inspected: collection.inspected,
 			observed_matches: total,
 			frozen_at: frozen.to_rfc3339(),
-			frozen: frozen.timestamp(),
+			cursor: None,
 			coverage,
-			text_profile: TEXT_PROFILE,
+			text_profile: TEXT_PROFILE.into(),
 		})
 	}
+}
+
+fn expired_cursor() -> Diagnostic {
+	Diagnostic::new(
+		"invalid_cursor",
+		"Feed cursor is missing, expired, evicted, or belongs to another definition; restart at page one",
+		(0, 0),
+	)
+}
+
+fn slice_page(mut page: FeedPage, request: &Request, start: usize) -> FeedPage {
+	let total = page.items.len();
+	page.items = page.items.into_iter().skip(start).take(usize::from(request.limit())).collect();
+	page.number = request.page();
+	page.previous_page = (request.page() > 1 && page.cursor.is_some()).then(|| request.page() - 1);
+	page.next_page = (start + usize::from(request.limit()) < total && page.cursor.is_some()).then(|| request.page() + 1);
+	page
 }
 
 async fn collect(
@@ -615,13 +691,6 @@ impl RankingSignals {
 
 fn extra_count(post: &Post, key: &str) -> u64 {
 	post.extra.get(key).and_then(serde_json::Value::as_u64).unwrap_or(0)
-}
-
-fn frozen_time(value: Option<i64>) -> Result<DateTime<Utc>, Diagnostic> {
-	match value {
-		Some(value) => DateTime::from_timestamp(value, 0).ok_or_else(|| Diagnostic::new("invalid_value", "Invalid frozen Unix timestamp", (0, 0))),
-		None => Ok(std::time::SystemTime::now().into()),
-	}
 }
 
 fn timestamp_ns(value: DateTime<Utc>) -> i128 {

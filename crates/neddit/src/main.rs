@@ -10,7 +10,8 @@ use neddit_api::{
 	server,
 	server::MediaProxy,
 	service::{ContentPolicy, RedditService},
-	video::VideoResolver,
+	storage::{Cache, Shortlinks},
+	video::{VideoResolver, VideoSupport},
 };
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -23,6 +24,9 @@ struct Args {
 
 	#[arg(long, help = "Validate the configuration and exit")]
 	check_config: bool,
+
+	#[arg(long, value_name = "FILE", conflicts_with = "check_config", help = "Back up feed definitions to a new file and exit")]
+	backup_feeds: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -35,6 +39,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	}
 
 	tracing_subscriber::fmt().with_env_filter(EnvFilter::try_new(&config.logging.filter)?).init();
+	if let Some(destination) = args.backup_feeds {
+		Shortlinks::open(&config.shortlinks).await?.backup(destination).await?;
+		return Ok(());
+	}
 
 	let domains = config.domain_policy()?;
 	let signer = if let Some(path) = &config.media.signing_key_file {
@@ -46,9 +54,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	.with_domains(domains.clone())
 	.with_content_policy(config.content.allow_nsfw);
 	info!("creating Reddit client");
-	let reddit = RedditClient::with_domains(domains).await?;
-	let service = RedditService::with_content_policy(reddit.clone(), ContentPolicy::new(config.content.allow_nsfw));
-	let video = config.video.enabled.then(|| VideoResolver::new(&config.video.executable));
+	let cache = Cache::open(&config.cache).await?;
+	let shortlinks = if config.shortlinks.enabled {
+		Some(Shortlinks::open(&config.shortlinks).await?)
+	} else {
+		None
+	};
+	let reddit = RedditClient::with_domains(domains).await?.with_cache(cache.clone());
+	let service = RedditService::with_content_policy(reddit.clone(), ContentPolicy::new(config.content.allow_nsfw)).with_storage(cache, shortlinks);
+	let video_support = VideoSupport::new(&config.video.providers);
+	let video = VideoResolver::new(&config.video.executable, video_support);
 	let media = MediaProxy::new(reddit.clone(), signer, video);
 	let app = neddit::router(service, &media, config.media.image_display, config.web.enabled, config.api.enabled);
 

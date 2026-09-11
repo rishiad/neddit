@@ -58,6 +58,7 @@ pub struct RedditClient {
 	http: WreqClient,
 	oauth: OAuthHandle,
 	domains: DomainPolicy,
+	cache: Option<crate::storage::Cache>,
 }
 
 struct UpstreamResponse {
@@ -67,6 +68,7 @@ struct UpstreamResponse {
 }
 
 impl RedditClient {
+
 	pub async fn new() -> Result<Self, ClientError> {
 		Self::with_domains(DomainPolicy::default()).await
 	}
@@ -74,7 +76,17 @@ impl RedditClient {
 	pub async fn with_domains(domains: DomainPolicy) -> Result<Self, ClientError> {
 		let http = Self::build_http_client()?;
 		let oauth = OAuthHandle::start(http.clone()).await?;
-		Ok(Self { http, oauth, domains })
+		Ok(Self {
+			http,
+			oauth,
+			domains,
+			cache: None,
+		})
+	}
+
+	pub fn with_cache(mut self, cache: crate::storage::Cache) -> Self {
+		self.cache = Some(cache);
+		self
 	}
 
 	pub async fn shutdown(&self) {
@@ -348,6 +360,17 @@ impl RedditClient {
 
 	/// Make a request to a Reddit API and parse the JSON response.
 	pub async fn json(&self, path: String, access: Access) -> Result<Value, ClientError> {
+		let Some(cache) = &self.cache else {
+			return self.fetch_json(path, access).await;
+		};
+		let key = cache_key(&path, access);
+		let ttl = cache_ttl(&path);
+		tokio::time::timeout(Duration::from_secs(20), cache.json(key, ttl, self.fetch_json(path, access)))
+			.await
+			.map_err(|_| ClientError::Timeout)?
+	}
+
+	async fn fetch_json(&self, path: String, access: Access) -> Result<Value, ClientError> {
 		let UpstreamResponse {
 			mut response,
 			lease,
@@ -432,6 +455,28 @@ impl RedditClient {
 		}
 
 		Some(reset.to_string())
+	}
+}
+
+pub(crate) fn cache_key(path: &str, access: Access) -> String {
+	let (path, query) = path.split_once('?').unwrap_or((path, ""));
+	let mut pairs: Vec<_> = form_urlencoded::parse(query.as_bytes()).collect();
+	// Stable key sort preserves the order of duplicate parameters.
+	pairs.sort_by(|a, b| a.0.cmp(&b.0));
+	let query = form_urlencoded::Serializer::new(String::new()).extend_pairs(pairs).finish();
+	format!("reddit-json-v1:{}", crate::storage::fingerprint(format!("{access:?}:{path}?{query}").as_bytes()))
+}
+
+fn cache_ttl(path: &str) -> i64 {
+	let path = path.split('?').next().unwrap_or(path);
+	if path.contains("/wiki/") || path.ends_with("/about/rules") {
+		600
+	} else if path.ends_with("/about") {
+		120
+	} else if path.contains("/comments/") || path.starts_with("/comments/") || path.starts_with("/by_id/") {
+		60
+	} else {
+		30
 	}
 }
 

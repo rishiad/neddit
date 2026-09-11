@@ -11,6 +11,7 @@ use neddit_api::{
 		CommentQuery, CommentSort, ListingQuery, ListingTime, MoreChildrenQuery, PostSort, RedditService, ServiceError, ThreadCommentSearchQuery, UserHistoryQuery,
 		UserHistorySort, WikiPageQuery,
 	},
+	video::VideoSupport,
 };
 use serde::Deserialize;
 
@@ -30,7 +31,7 @@ const MORE_COMMENTS_BATCH_SIZE: usize = 100;
 
 #[derive(Clone, Copy)]
 struct PostMedia {
-	video_enabled: bool,
+	video_support: VideoSupport,
 	image_display: ImageDisplay,
 }
 
@@ -212,7 +213,7 @@ async fn user_page(
 		..UserHistoryQuery::default()
 	};
 	let (activity, user) = tokio::try_join!(
-		user_activity(&service, &signer, media.video_enabled(), &username, &history_query, section),
+		user_activity(&service, &signer, media.video_support(), &username, &history_query, section),
 		service.user_about(&username, Access::Standard),
 	)?;
 	let posts_url = format!("/user/{username}");
@@ -238,7 +239,7 @@ async fn user_page(
 async fn user_activity(
 	service: &RedditService,
 	signer: &MediaSigner,
-	video_enabled: bool,
+	video_support: VideoSupport,
 	username: &str,
 	query: &UserHistoryQuery,
 	section: UserSection,
@@ -247,7 +248,7 @@ async fn user_activity(
 		UserSection::Posts => {
 			let listing = service.user_submitted(username, query, Access::Standard).await?;
 			let before = listing.data.before.clone().or_else(|| listing.data.children.first().map(|thing| thing.data.name.clone()));
-			let results = listing.data.children.iter().map(|thing| post_result(&thing.data, signer, video_enabled)).collect();
+			let results = listing.data.children.iter().map(|thing| post_result(&thing.data, signer, video_support)).collect();
 			Ok(UserActivityPage {
 				before,
 				after: listing.data.after,
@@ -261,7 +262,7 @@ async fn user_activity(
 				.before
 				.clone()
 				.or_else(|| listing.data.children.first().map(public_fullname).map(str::to_owned));
-			let results = listing.data.children.iter().filter_map(|item| search_result(item, signer, video_enabled)).collect();
+			let results = listing.data.children.iter().filter_map(|item| search_result(item, signer, video_support)).collect();
 			Ok(UserActivityPage {
 				before,
 				after: listing.data.after,
@@ -362,7 +363,7 @@ pub async fn post_comments(
 		service,
 		signer,
 		PostMedia {
-			video_enabled: media.video_enabled(),
+			video_support: media.video_support(),
 			image_display,
 		},
 		None,
@@ -385,7 +386,7 @@ pub async fn subreddit_post_comments(
 		service,
 		signer,
 		PostMedia {
-			video_enabled: media.video_enabled(),
+			video_support: media.video_support(),
 			image_display,
 		},
 		Some(subreddit),
@@ -408,7 +409,7 @@ pub async fn post_permalink(
 		service,
 		signer,
 		PostMedia {
-			video_enabled: media.video_enabled(),
+			video_support: media.video_support(),
 			image_display,
 		},
 		None,
@@ -431,7 +432,7 @@ pub async fn post_comment_permalink(
 		service,
 		signer,
 		PostMedia {
-			video_enabled: media.video_enabled(),
+			video_support: media.video_support(),
 			image_display,
 		},
 		None,
@@ -454,7 +455,7 @@ pub async fn subreddit_post_permalink(
 		service,
 		signer,
 		PostMedia {
-			video_enabled: media.video_enabled(),
+			video_support: media.video_support(),
 			image_display,
 		},
 		Some(subreddit),
@@ -477,7 +478,7 @@ pub async fn subreddit_post_comment_permalink(
 		service,
 		signer,
 		PostMedia {
-			video_enabled: media.video_enabled(),
+			video_support: media.video_support(),
 			image_display,
 		},
 		Some(subreddit),
@@ -568,7 +569,7 @@ pub async fn post_content(
 		.next()
 		.ok_or(AppError::PostNotFound)?
 		.data;
-	let mut post = post_view(&post, &signer, media.video_enabled(), image_display);
+	let mut post = post_view(&post, &signer, media.video_support(), image_display);
 	post.hide_content = false;
 	Ok(PostContentTemplate { post })
 }
@@ -619,7 +620,7 @@ async fn post_page(
 		(post, tree, 0)
 	};
 	let comment_count = post.num_comments;
-	let post = post_view(&post, &signer, media.video_enabled, media.image_display);
+	let post = post_view(&post, &signer, media.video_support, media.image_display);
 	let search_query = search.as_deref().unwrap_or_default();
 
 	Ok(PostTemplate {

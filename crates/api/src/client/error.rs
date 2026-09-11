@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ClientError {
+	#[error("Reddit request deadline exceeded: 20 seconds")]
+	Timeout,
 	#[error("upstream response exceeds the 8 MiB response limit")]
 	BodyTooLarge,
 	#[error("Reddit returned unexpected HTTP status {status} for `{path}`")]

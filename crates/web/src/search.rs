@@ -62,7 +62,7 @@ pub async fn page(State(service): State<RedditService>, State(signer): State<Med
 	}
 	match service.search_ql(&request).await {
 		Ok(page) => {
-			view.results = page.items.iter().filter_map(|item| search_result(item, &signer, media.video_enabled())).collect();
+			view.results = page.items.iter().filter_map(|item| search_result(item, &signer, media.video_support())).collect();
 			view.result_count = view.results.len();
 			view.searched = true;
 			let previous_url = page.previous_cursor.as_deref().map(|cursor| search_page_url(&request, kind, cursor)).unwrap_or_default();

@@ -32,20 +32,21 @@
         </div>
         {% if nsfw_available %}<label class="feed-checkbox"><input type="checkbox" name="include_nsfw" value="true"{% if include_nsfw %} checked{% endif %}> Include NSFW posts</label>{% endif %}
         <button class="feed-submit" type="submit">Build Feed</button>
+        {% match create_action %}{% when Some with (action) %}<button type="submit" formmethod="post" formaction="{{ action }}">Create shortlink</button>{% when None %}{% endmatch %}
       </form>
     </section>
   {% endif %}
 
   {% if !diagnostic.is_empty() %}<p role="alert">{{ diagnostic }}</p>{% endif %}
 
+  {% if !share_url.is_empty() %}
+    <section class="feed-share" aria-label="Shareable feed URL">
+      <label class="visually-hidden" for="feed-share-url">Shareable feed URL</label>
+      <input id="feed-share-url" type="text" value="{{ share_url }}" readonly>
+    </section>
+  {% endif %}
   {% if searched %}
     <section class="custom-feed" aria-label="Feed preview">
-      {% if !share_url.is_empty() && mode.is_builder() %}
-        <section class="feed-share" aria-label="Shareable feed URL">
-          <label class="visually-hidden" for="feed-share-url">Shareable feed URL</label>
-          <input id="feed-share-url" type="text" value="{{ share_url }}" readonly>
-        </section>
-      {% endif %}
       {% if result_count == 0 %}<p class="comments-empty">No posts matched the feed filters.</p>{% endif %}
       {% include "partials/feed_list.html" %}
     </section>

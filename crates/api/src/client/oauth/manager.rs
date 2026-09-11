@@ -194,6 +194,7 @@ pub(crate) struct OAuthHandle {
 }
 
 impl OAuthHandle {
+
 	pub(crate) async fn start(http: WreqClient) -> Result<Self, AuthError> {
 		Self::start_with_authenticator(http, Arc::new(RedditAuthenticator)).await
 	}

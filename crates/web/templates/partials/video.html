@@ -1,4 +1,12 @@
 <div class="hosted-video">
+  {% match video.source %}
+    {% when Some with (source) %}
+      <div class="video-stage">
+        <video class="video-player" controls playsinline preload="metadata"{% if post.inline_image %}{% match video.poster %}{% when Some with (poster) %} poster="{{ poster }}"{% when None %}{% endmatch %}{% endif %}>
+          <source src="{{ source }}" type="video/mp4">
+        </video>
+      </div>
+    {% when None %}
   <div class="video-stage">
     {% match video.poster %}
       {% when Some with (poster) %}
@@ -18,4 +26,5 @@
       <span class="video-spinner htmx-indicator" aria-hidden="true"></span>
     </button>
   </div>
+  {% endmatch %}
 </div>

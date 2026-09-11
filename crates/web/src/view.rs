@@ -11,6 +11,7 @@ use askama_web::WebTemplate;
 use neddit_api::media::MediaSigner;
 use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, PublicThing, Subreddit, User, WikiPage, WikiPageListing};
 use neddit_api::video::{VideoPlayback, VideoSupport};
+use serde_json::Value;
 use url::{form_urlencoded, Url};
 
 use crate::{markdown, ImageDisplay, WebFeatures};
@@ -45,6 +46,7 @@ pub struct PostFlair {
 pub struct VideoView {
 	pub player_url: String,
 	pub poster: Option<String>,
+	pub source: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -323,7 +325,7 @@ pub struct MoreCommentsTemplate {
 
 pub fn feed_item(post: &Post, signer: &MediaSigner) -> FeedItem {
 	let permalink = local_web_navigation(&post.permalink, signer).unwrap_or_else(|| post.permalink.clone());
-	let href = if post.is_self {
+	let href = if post.is_self || is_reddit_video(post) {
 		permalink.clone()
 	} else {
 		post_media_url(post, signer)
@@ -378,15 +380,37 @@ pub fn subreddit_feed_item(post: &Post, signer: &MediaSigner, subreddit_is_nsfw:
 
 pub fn feed_item_with_video(post: &Post, signer: &MediaSigner, video_support: VideoSupport) -> FeedItem {
 	let mut item = feed_item(post, signer);
-	if video_support.supports(&post.url) {
+	if let Some(source) = reddit_video_source(post).and_then(|source| signer.signed_media_url(source)) {
+		item.video = Some(VideoView {
+			player_url: String::new(),
+			poster: preview_url(post).and_then(|url| signer.signed_media_url(url)),
+			source: Some(source),
+		});
+	} else if video_support.supports(&post.url) {
 		let mut query = form_urlencoded::Serializer::new(String::new());
 		query.append_pair("url", &post.url);
 		item.video = Some(VideoView {
 			player_url: format!("/video/player?{}", query.finish()),
 			poster: preview_url(post).and_then(|url| signer.signed_media_url(url)),
+			source: None,
 		});
 	}
 	item
+}
+
+fn reddit_video_source(post: &Post) -> Option<&str> {
+	post
+		.extra
+		.get("secure_media")
+		.and_then(|media| media.pointer("/reddit_video/fallback_url"))
+		.or_else(|| post.extra.get("media").and_then(|media| media.pointer("/reddit_video/fallback_url")))
+		.and_then(Value::as_str)
+}
+
+fn is_reddit_video(post: &Post) -> bool {
+	reddit_video_source(post).is_some()
+		|| post.extra.get("is_video").and_then(Value::as_bool) == Some(true)
+		|| post.extra.get("post_hint").and_then(Value::as_str) == Some("hosted:video")
 }
 
 pub fn custom_feed_item(post: &Post, signer: &MediaSigner, video_support: VideoSupport, include_nsfw: bool) -> FeedItem {

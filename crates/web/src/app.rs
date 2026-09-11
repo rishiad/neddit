@@ -16,15 +16,23 @@ use serde::Deserialize;
 
 use crate::{
 	error::AppError,
+	markdown,
 	view::{
 		comment_sort_controls, comment_tree, community_view, feed_controls, feed_item, feed_pagination, gallery_view, generated_wiki_index, has_public_wiki_pages, has_wiki_page,
 		loaded_comment_tree, post_result, post_view, search_comment_tree, search_result, subreddit_feed_item, user_controls, user_profile, wiki_path, wiki_view, FeedTemplate,
 		GalleryTemplate, MoreCommentsTemplate, PostContentTemplate, PostTemplate, SearchResultView, SubredditTemplate, UserTemplate, VideoPlayerTemplate, WikiTemplate,
 	},
+	ImageDisplay,
 };
 
 const PAGE_SIZE: u8 = 25;
 const MORE_COMMENTS_BATCH_SIZE: usize = 100;
+
+#[derive(Clone, Copy)]
+struct PostMedia {
+	video_enabled: bool,
+	image_display: ImageDisplay,
+}
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct FeedQuery {
@@ -98,6 +106,7 @@ pub async fn front_page(State(service): State<RedditService>, State(signer): Sta
 pub async fn subreddit_feed(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
+	State(image_display): State<ImageDisplay>,
 	Path(subreddit): Path<String>,
 	Query(query): Query<FeedQuery>,
 ) -> Result<SubredditTemplate, AppError> {
@@ -138,7 +147,7 @@ pub async fn subreddit_feed(
 	};
 
 	Ok(SubredditTemplate {
-		community: community_view(&community.data, &signer, has_wiki),
+		community: community_view(&community.data, &signer, image_display, has_wiki),
 		items,
 		controls: feed_controls(&format!("/r/{subreddit}"), sort_name, time_name, true),
 		pagination,
@@ -276,24 +285,37 @@ fn listing_count(page: u32, before: bool) -> u32 {
 	traversed_pages.saturating_mul(u32::from(PAGE_SIZE))
 }
 
-pub async fn wiki_root(State(service): State<RedditService>, State(signer): State<MediaSigner>, Path(subreddit): Path<String>) -> Result<Response, AppError> {
-	wiki_response(service, signer, subreddit, None, WikiQuery::default()).await
+pub async fn wiki_root(
+	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
+	State(image_display): State<ImageDisplay>,
+	Path(subreddit): Path<String>,
+) -> Result<Response, AppError> {
+	wiki_response(service, signer, image_display, subreddit, None, WikiQuery::default()).await
 }
 
 pub async fn wiki_page(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
+	State(image_display): State<ImageDisplay>,
 	Path((subreddit, page)): Path<(String, String)>,
 	Query(query): Query<WikiQuery>,
 ) -> Result<Response, AppError> {
-	wiki_response(service, signer, subreddit, Some(page), query).await
+	wiki_response(service, signer, image_display, subreddit, Some(page), query).await
 }
 
-async fn wiki_response(service: RedditService, signer: MediaSigner, subreddit: String, requested_page: Option<String>, query: WikiQuery) -> Result<Response, AppError> {
+async fn wiki_response(
+	service: RedditService,
+	signer: MediaSigner,
+	image_display: ImageDisplay,
+	subreddit: String,
+	requested_page: Option<String>,
+	query: WikiQuery,
+) -> Result<Response, AppError> {
 	let query = WikiPageQuery { v: query.v, v2: query.v2 };
 	let (community, pages) = tokio::try_join!(service.subreddit_about(&subreddit, Access::Standard), service.wiki_pages(&subreddit, Access::Standard),)?;
 	let has_wiki = has_public_wiki_pages(&pages);
-	let community = community_view(&community.data, &signer, has_wiki);
+	let community = community_view(&community.data, &signer, image_display, has_wiki);
 	let requested_page = requested_page.map(|page| page.trim_end_matches('/').to_owned());
 
 	let Some(page) = requested_page else {
@@ -322,7 +344,7 @@ async fn wiki_response(service: RedditService, signer: MediaSigner, subreddit: S
 	Ok(
 		WikiTemplate {
 			community,
-			wiki: wiki_view(&subreddit, &page, &wiki, &pages, &signer),
+			wiki: wiki_view(&subreddit, &page, &wiki, &pages, &signer, image_display),
 		}
 		.into_response(),
 	)
@@ -332,63 +354,146 @@ pub async fn post_comments(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
+	State(image_display): State<ImageDisplay>,
 	Path(article): Path<String>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), None, article, None, query).await
+	post_page(
+		service,
+		signer,
+		PostMedia {
+			video_enabled: media.video_enabled(),
+			image_display,
+		},
+		None,
+		article,
+		None,
+		query,
+	)
+	.await
 }
 
 pub async fn subreddit_post_comments(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
+	State(image_display): State<ImageDisplay>,
 	Path((subreddit, article)): Path<(String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), Some(subreddit), article, None, query).await
+	post_page(
+		service,
+		signer,
+		PostMedia {
+			video_enabled: media.video_enabled(),
+			image_display,
+		},
+		Some(subreddit),
+		article,
+		None,
+		query,
+	)
+	.await
 }
 
 pub async fn post_permalink(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
+	State(image_display): State<ImageDisplay>,
 	Path((article, _slug)): Path<(String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), None, article, None, query).await
+	post_page(
+		service,
+		signer,
+		PostMedia {
+			video_enabled: media.video_enabled(),
+			image_display,
+		},
+		None,
+		article,
+		None,
+		query,
+	)
+	.await
 }
 
 pub async fn post_comment_permalink(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
+	State(image_display): State<ImageDisplay>,
 	Path((article, _slug, comment)): Path<(String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), None, article, Some(comment), query).await
+	post_page(
+		service,
+		signer,
+		PostMedia {
+			video_enabled: media.video_enabled(),
+			image_display,
+		},
+		None,
+		article,
+		Some(comment),
+		query,
+	)
+	.await
 }
 
 pub async fn subreddit_post_permalink(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
+	State(image_display): State<ImageDisplay>,
 	Path((subreddit, article, _slug)): Path<(String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), Some(subreddit), article, None, query).await
+	post_page(
+		service,
+		signer,
+		PostMedia {
+			video_enabled: media.video_enabled(),
+			image_display,
+		},
+		Some(subreddit),
+		article,
+		None,
+		query,
+	)
+	.await
 }
 
 pub async fn subreddit_post_comment_permalink(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
+	State(image_display): State<ImageDisplay>,
 	Path((subreddit, article, _slug, comment)): Path<(String, String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), Some(subreddit), article, Some(comment), query).await
+	post_page(
+		service,
+		signer,
+		PostMedia {
+			video_enabled: media.video_enabled(),
+			image_display,
+		},
+		Some(subreddit),
+		article,
+		Some(comment),
+		query,
+	)
+	.await
 }
 
-pub async fn more_comments(State(service): State<RedditService>, Query(query): Query<MoreCommentsQuery>) -> Result<MoreCommentsTemplate, AppError> {
+pub async fn more_comments(
+	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
+	State(image_display): State<ImageDisplay>,
+	Query(query): Query<MoreCommentsQuery>,
+) -> Result<MoreCommentsTemplate, AppError> {
 	let (sort, sort_name) = parse_comment_sort(query.sort.as_deref())?;
 	let mut children: Vec<String> = query.children.split(',').filter(|child| !child.is_empty()).map(str::to_owned).collect();
 	let remaining = if children.len() > MORE_COMMENTS_BATCH_SIZE {
@@ -410,7 +515,14 @@ pub async fn more_comments(State(service): State<RedditService>, Query(query): Q
 		.await?;
 
 	Ok(MoreCommentsTemplate {
-		comment_tree: loaded_comment_tree(&response.json.data.things, &query.parent_id, &query.link_id, sort_name, &remaining),
+		comment_tree: loaded_comment_tree(
+			&response.json.data.things,
+			&query.parent_id,
+			&query.link_id,
+			sort_name,
+			&remaining,
+			markdown::Renderer::new(&signer, image_display),
+		),
 	})
 }
 
@@ -423,6 +535,7 @@ pub async fn video_player(State(media): State<MediaProxy>, Query(query): Query<V
 pub async fn gallery(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
+	State(image_display): State<ImageDisplay>,
 	Path((article, index)): Path<(String, usize)>,
 ) -> Result<GalleryTemplate, AppError> {
 	let post = service
@@ -435,7 +548,7 @@ pub async fn gallery(
 		.ok_or(AppError::PostNotFound)?
 		.data;
 	Ok(GalleryTemplate {
-		gallery: gallery_view(&post, &signer, index).ok_or(AppError::PostNotFound)?,
+		gallery: gallery_view(&post, &signer, image_display, index).ok_or(AppError::PostNotFound)?,
 	})
 }
 
@@ -443,6 +556,7 @@ pub async fn post_content(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
+	State(image_display): State<ImageDisplay>,
 	Path(article): Path<String>,
 ) -> Result<PostContentTemplate, AppError> {
 	let post = service
@@ -454,7 +568,7 @@ pub async fn post_content(
 		.next()
 		.ok_or(AppError::PostNotFound)?
 		.data;
-	let mut post = post_view(&post, &signer, media.video_enabled());
+	let mut post = post_view(&post, &signer, media.video_enabled(), image_display);
 	post.hide_content = false;
 	Ok(PostContentTemplate { post })
 }
@@ -462,12 +576,13 @@ pub async fn post_content(
 async fn post_page(
 	service: RedditService,
 	signer: MediaSigner,
-	video_enabled: bool,
+	media: PostMedia,
 	subreddit: Option<String>,
 	article: String,
 	comment: Option<String>,
 	query: PostQuery,
 ) -> Result<PostTemplate, AppError> {
+	let renderer = markdown::Renderer::new(&signer, media.image_display);
 	let (sort, sort_name) = parse_comment_sort(query.sort.as_deref())?;
 	let search = query.q.map(|value| value.trim().to_owned()).filter(|value| !value.is_empty());
 	if search.as_ref().is_some_and(|value| value.chars().count() > 512) {
@@ -492,7 +607,7 @@ async fn post_page(
 			.search_post_comments(&post.subreddit, &article, &ThreadCommentSearchQuery { query: search.clone(), sort }, Access::Standard)
 			.await?;
 		let count = comments.len();
-		(post, search_comment_tree(&comments), count)
+		(post, search_comment_tree(&comments, renderer), count)
 	} else {
 		let PostComments(posts, comments) = match subreddit {
 			Some(subreddit) => service.subreddit_post_comments(&subreddit, &article, &comment_query, Access::Standard).await?,
@@ -500,11 +615,11 @@ async fn post_page(
 		};
 		let post = posts.data.children.into_iter().next().ok_or(AppError::PostNotFound)?.data;
 		let link_id = post.name.clone();
-		let tree = comment_tree(&comments.data.children, &link_id, sort_name);
+		let tree = comment_tree(&comments.data.children, &link_id, sort_name, renderer);
 		(post, tree, 0)
 	};
 	let comment_count = post.num_comments;
-	let post = post_view(&post, &signer, video_enabled);
+	let post = post_view(&post, &signer, media.video_enabled, media.image_display);
 	let search_query = search.as_deref().unwrap_or_default();
 
 	Ok(PostTemplate {

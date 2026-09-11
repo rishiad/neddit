@@ -6,7 +6,7 @@
   {% match post.image_url %}
     {% when Some with (image_url) %}
       <a class="post-media-link" href="{{ image_url }}">
-        <img class="post-media" src="{{ image_url }}" alt="" decoding="async">
+        {% if post.inline_image %}<img class="post-media" src="{{ image_url }}" alt="" decoding="async">{% else %}View image{% endif %}
       </a>
     {% when None %}
   {% endmatch %}
@@ -15,6 +15,6 @@
     {% when None %}
   {% endmatch %}
   {% if post.show_selftext %}
-    <div class="post-copy">{{ post.selftext }}</div>
+    <div class="post-copy rich-text">{{ post.selftext_html|safe }}</div>
   {% endif %}
 </div>

@@ -35,10 +35,6 @@
           {% when Some with (description) %}
             <div class="community-description rich-text">{{ description|safe }}</div>
           {% when None %}
-            {% match community.description %}
-              {% when Some with (description) %}<div class="community-description">{{ description }}</div>
-              {% when None %}
-            {% endmatch %}
         {% endmatch %}
         {% if community.over_18 %}<p class="community-notice">NSFW community</p>{% endif %}
       </details>

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use neddit_api::media::{DomainPolicy, MediaUrlError};
+use neddit_web::ImageDisplay;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +52,7 @@ pub struct DomainConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MediaConfig {
+	pub image_display: ImageDisplay,
 	#[serde(default)]
 	pub signing_key_file: Option<PathBuf>,
 }
@@ -128,7 +130,10 @@ impl Default for Config {
 				shortlinks: Vec::new(),
 				media: Vec::new(),
 			},
-			media: MediaConfig { signing_key_file: None },
+			media: MediaConfig {
+				image_display: ImageDisplay::Link,
+				signing_key_file: None,
+			},
 			video: VideoConfig {
 				enabled: true,
 				executable: "yt-dlp".into(),

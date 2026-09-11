@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let service = RedditService::with_content_policy(reddit.clone(), ContentPolicy::new(config.content.allow_nsfw));
 	let video = config.video.enabled.then(|| VideoResolver::new(&config.video.executable));
 	let media = MediaProxy::new(reddit.clone(), signer, video);
-	let app = neddit::router(service, &media, config.web.enabled, config.api.enabled);
+	let app = neddit::router(service, &media, config.media.image_display, config.web.enabled, config.api.enabled);
 
 	info!(address = %config.server.listen, version = env!("CARGO_PKG_VERSION"), "neddit listening");
 	let result = server::listen(app, &config.server.listen).await;

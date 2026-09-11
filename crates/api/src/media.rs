@@ -159,6 +159,14 @@ impl MediaSigner {
 		Ok(format!("{MEDIA_ROUTE}/{signature}/{encoded}"))
 	}
 
+	/// Validate an upstream media URL and turn it into a signed local URL.
+	pub fn signed_media_url(&self, source: &str) -> Option<String> {
+		let decoded = if source.starts_with("//") { format!("https:{source}") } else { source.to_owned() }.replace("&amp;", "&");
+		let mut target = Url::parse(&decoded).ok()?;
+		target.set_fragment(None);
+		self.media_url(&target).ok()
+	}
+
 	pub fn decode_target(&self, signature: &str, encoded: &str) -> Result<Url, MediaUrlError> {
 		let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| MediaUrlError::InvalidEncoding)?;
 		let target = std::str::from_utf8(&bytes).map_err(|_| MediaUrlError::InvalidEncoding)?;

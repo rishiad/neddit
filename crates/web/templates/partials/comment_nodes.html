@@ -32,7 +32,7 @@
               <span class="comment-mobile-score">{{ comment.score }} points</span>
               <label class="comment-row-folder" for="comment-folder-{{ comment.id }}" aria-label="Toggle comment by {{ comment.author }}"></label>
             </header>
-            <div class="comment-body" role="heading" aria-level="3">{{ comment.body }}</div>
+            <div class="comment-body rich-text" role="heading" aria-level="3">{{ comment.body_html|safe }}</div>
           </article>
         {% endif %}
     {% when CommentTreeEvent::OpenReplies %}

@@ -13,6 +13,8 @@ use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, Publ
 use neddit_api::video::{VideoPlayback, VideoResolver};
 use url::{form_urlencoded, Url};
 
+use crate::{markdown, ImageDisplay};
+
 #[derive(Clone, Debug)]
 pub struct FeedItem {
 	pub title: String,
@@ -157,7 +159,6 @@ pub struct CommunityView {
 	pub display_name_prefixed: String,
 	pub title: String,
 	pub public_description: Option<String>,
-	pub description: Option<String>,
 	pub description_html: Option<String>,
 	pub members: String,
 	pub active: String,
@@ -227,7 +228,8 @@ pub struct PostView {
 	pub item: FeedItem,
 	pub gallery: Option<GalleryView>,
 	pub image_url: Option<String>,
-	pub selftext: String,
+	pub inline_image: bool,
+	pub selftext_html: String,
 	pub show_selftext: bool,
 	pub hide_content: bool,
 	pub content_url: String,
@@ -248,6 +250,7 @@ pub struct GalleryView {
 pub struct GalleryImageView {
 	pub url: String,
 	pub alt: String,
+	pub inline: bool,
 	pub caption: Option<String>,
 }
 
@@ -257,6 +260,7 @@ pub struct CommentView {
 	pub author: String,
 	pub author_url: String,
 	pub body: String,
+	pub body_html: String,
 	pub score: String,
 	pub age: String,
 	pub permalink: String,
@@ -372,10 +376,7 @@ pub fn feed_item_with_media(post: &Post, signer: &MediaSigner, video_enabled: bo
 		query.append_pair("url", &post.url);
 		item.video = Some(VideoView {
 			player_url: format!("/video/player?{}", query.finish()),
-			poster: preview_url(post).and_then(|url| {
-				let rewritten = signer.rewrite_text(url);
-				rewritten.starts_with("/media/").then_some(rewritten)
-			}),
+			poster: preview_url(post).and_then(|url| signer.signed_media_url(url)),
 		});
 	}
 	item
@@ -391,8 +392,7 @@ pub fn custom_feed_item(post: &Post, signer: &MediaSigner, video_enabled: bool, 
 }
 
 fn post_media_url(post: &Post, signer: &MediaSigner) -> Option<String> {
-	let rewritten = signer.rewrite_text(&post.url);
-	rewritten.starts_with("/media/").then_some(rewritten)
+	signer.signed_media_url(&post.url)
 }
 
 fn preview_url(post: &Post) -> Option<&str> {
@@ -549,25 +549,23 @@ pub fn search_choices(active_kind: &str, active_sort: &str, active_limit: u8) ->
 	)
 }
 
-pub fn community_view(subreddit: &Subreddit, signer: &MediaSigner, has_wiki: bool) -> CommunityView {
+pub fn community_view(subreddit: &Subreddit, signer: &MediaSigner, image_display: ImageDisplay, has_wiki: bool) -> CommunityView {
 	let title = if subreddit.title.trim().is_empty() {
 		subreddit.display_name_prefixed.clone()
 	} else {
 		subreddit.title.trim().to_owned()
 	};
 	let public_description = nonempty(subreddit.public_description.trim());
-	let description = subreddit.description.as_deref().and_then(|s| nonempty(s.trim()));
 	let description_html = subreddit
-		.description_html
+		.description
 		.as_deref()
-		.map(|html| sanitize_html(html, signer))
+		.map(|source| markdown::render(source, subreddit.extra.get("media_metadata"), signer, image_display))
 		.and_then(|html| nonempty(&html));
 	let posts_url = format!("/r/{}", subreddit.display_name);
 	CommunityView {
 		display_name_prefixed: subreddit.display_name_prefixed.clone(),
 		title,
 		public_description,
-		description,
 		description_html,
 		members: subreddit.subscribers.map_or_else(|| "—".into(), compact),
 		active: subreddit.accounts_active.map_or_else(|| "—".into(), compact),
@@ -605,11 +603,11 @@ pub fn wiki_links(subreddit: &str, active_page: Option<&str>, pages: &WikiPageLi
 	links
 }
 
-pub fn wiki_view(subreddit: &str, page: &str, wiki: &WikiPage, pages: &WikiPageListing, signer: &MediaSigner) -> WikiView {
+pub fn wiki_view(subreddit: &str, page: &str, wiki: &WikiPage, pages: &WikiPageListing, signer: &MediaSigner, image_display: ImageDisplay) -> WikiView {
 	let title = if page == "index" { "Wiki".into() } else { page.replace(['_', '-'], " ") };
 	WikiView {
 		title,
-		content_html: sanitize_html(&wiki.data.content_html, signer),
+		content_html: markdown::render(&wiki.data.content_md, wiki.data.extra.get("media_metadata"), signer, image_display),
 		revision_age: wiki.data.revision_date.map_or_else(String::new, age),
 		show_revision: wiki.data.revision_date.is_some(),
 		links: wiki_links(subreddit, Some(page), pages),
@@ -628,13 +626,15 @@ pub fn generated_wiki_index(subreddit: &str, pages: &WikiPageListing) -> WikiVie
 	}
 }
 
-fn sanitize_html(value: &str, signer: &MediaSigner) -> String {
+pub(crate) fn sanitize_html(value: &str, signer: &MediaSigner) -> String {
 	let signer = signer.clone();
 	let mut builder = Builder::new();
 	for heading in ["h1", "h2", "h3", "h4", "h5", "h6"] {
 		builder.add_tag_attributes(heading, &["id"]);
 	}
 	builder
+		.add_tag_attributes("span", &["tabindex"])
+		.add_allowed_classes("span", &["md-spoiler-text"])
 		.url_relative(UrlRelative::PassThrough)
 		.attribute_filter(move |element, attribute, value| {
 			if element == "a" && attribute == "href" {
@@ -653,22 +653,23 @@ fn nonempty(value: &str) -> Option<String> {
 	(!value.is_empty()).then(|| value.to_owned())
 }
 
-pub fn post_view(post: &Post, signer: &MediaSigner, video_enabled: bool) -> PostView {
+pub fn post_view(post: &Post, signer: &MediaSigner, video_enabled: bool, image_display: ImageDisplay) -> PostView {
 	let mut item = feed_item_with_media(post, signer, video_enabled);
 	item.flair = post_flair(post);
-	let gallery = gallery_view(post, signer, 0);
+	let gallery = gallery_view(post, signer, image_display, 0);
 	let image_url = if gallery.is_none() && item.video.is_none() && is_image_post(post) {
 		post_media_url(post, signer)
 	} else {
 		None
 	};
-	let selftext = post.selftext.trim().to_owned();
+	let selftext = post.selftext.trim();
 	PostView {
 		show_selftext: !selftext.is_empty(),
 		item,
 		gallery,
 		image_url,
-		selftext,
+		inline_image: image_display == ImageDisplay::Inline,
+		selftext_html: markdown::render(selftext, post.extra.get("media_metadata"), signer, image_display),
 		hide_content: post.spoiler,
 		content_url: format!("/post-content/{}", post.id),
 	}
@@ -692,7 +693,7 @@ fn post_flair(post: &Post) -> Option<PostFlair> {
 	})
 }
 
-pub fn gallery_view(post: &Post, signer: &MediaSigner, index: usize) -> Option<GalleryView> {
+pub fn gallery_view(post: &Post, signer: &MediaSigner, image_display: ImageDisplay, index: usize) -> Option<GalleryView> {
 	let metadata = post.extra.get("media_metadata")?.as_object()?;
 	let images: Vec<_> = post
 		.extra
@@ -709,10 +710,7 @@ pub fn gallery_view(post: &Post, signer: &MediaSigner, index: usize) -> Option<G
 				.or_else(|| source.get("u"))
 				.and_then(|value| value.as_str())
 				.or_else(|| media.get("p")?.as_array()?.last()?.get("u")?.as_str())?;
-			let url = signer.rewrite_text(upstream);
-			if !url.starts_with("/media/") {
-				return None;
-			}
+			let url = signer.signed_media_url(upstream)?;
 			let caption = item
 				.get("caption")
 				.and_then(|value| value.as_str())
@@ -729,6 +727,7 @@ pub fn gallery_view(post: &Post, signer: &MediaSigner, index: usize) -> Option<G
 		image: GalleryImageView {
 			alt: caption.clone().unwrap_or_else(|| format!("Gallery image {position} of {total}")),
 			url,
+			inline: image_display == ImageDisplay::Inline,
 			caption,
 		},
 		position,
@@ -754,19 +753,26 @@ fn is_image_post(post: &Post) -> bool {
 	)
 }
 
-pub fn comment_tree(children: &[CommentChild], link_id: &str, sort: &str) -> Vec<CommentTreeEvent> {
+pub fn comment_tree(children: &[CommentChild], link_id: &str, sort: &str, renderer: markdown::Renderer<'_>) -> Vec<CommentTreeEvent> {
 	let mut tree = Vec::new();
-	append_comments(children, link_id, sort, &mut tree);
+	append_comments(children, link_id, sort, renderer, &mut tree);
 	tree
 }
 
-pub fn loaded_comment_tree(children: &[CommentChild], parent_id: &str, link_id: &str, sort: &str, remaining: &[String]) -> Vec<CommentTreeEvent> {
+pub fn loaded_comment_tree(
+	children: &[CommentChild],
+	parent_id: &str,
+	link_id: &str,
+	sort: &str,
+	remaining: &[String],
+	renderer: markdown::Renderer<'_>,
+) -> Vec<CommentTreeEvent> {
 	let mut tree = Vec::new();
 	let mut visited = HashSet::new();
-	append_flat_comments(children, parent_id, link_id, sort, &mut visited, &mut tree);
+	append_flat_comments(children, parent_id, link_id, sort, renderer, &mut visited, &mut tree);
 	for child in children {
 		if !visited.contains(child_name(child)) {
-			append_flat_comment(child, children, link_id, sort, &mut visited, &mut tree);
+			append_flat_comment(child, children, link_id, sort, renderer, &mut visited, &mut tree);
 		}
 	}
 	if !remaining.is_empty() {
@@ -775,6 +781,7 @@ pub fn loaded_comment_tree(children: &[CommentChild], parent_id: &str, link_id: 
 			author: String::new(),
 			author_url: String::new(),
 			body: format!("{} more replies", compact(remaining.len() as u64)),
+			body_html: String::new(),
 			score: String::new(),
 			age: String::new(),
 			permalink: String::new(),
@@ -858,10 +865,10 @@ pub fn user_controls(action: &str, active_sort: &'static str, active_time: &str)
 	}
 }
 
-pub fn search_comment_tree(comments: &[Comment]) -> Vec<CommentTreeEvent> {
+pub fn search_comment_tree(comments: &[Comment], renderer: markdown::Renderer<'_>) -> Vec<CommentTreeEvent> {
 	let mut tree = Vec::with_capacity(comments.len() * 2);
 	for comment in comments {
-		tree.push(CommentTreeEvent::Open(Box::new(comment_view(comment))));
+		tree.push(CommentTreeEvent::Open(Box::new(comment_view(comment, renderer))));
 		tree.push(CommentTreeEvent::Close);
 	}
 	tree
@@ -979,16 +986,16 @@ fn display_author(author: &str) -> String {
 	}
 }
 
-fn append_comments(children: &[CommentChild], link_id: &str, sort: &str, tree: &mut Vec<CommentTreeEvent>) {
+fn append_comments(children: &[CommentChild], link_id: &str, sort: &str, renderer: markdown::Renderer<'_>, tree: &mut Vec<CommentTreeEvent>) {
 	for child in children {
 		match child {
 			CommentChild::Comment(comment) => {
 				let data = &comment.data;
-				tree.push(CommentTreeEvent::Open(Box::new(comment_view(data))));
+				tree.push(CommentTreeEvent::Open(Box::new(comment_view(data, renderer))));
 				if let CommentReplies::Listing(replies) = &data.replies {
 					if !replies.data.children.is_empty() {
 						tree.push(CommentTreeEvent::OpenReplies);
-						append_comments(&replies.data.children, link_id, sort, tree);
+						append_comments(&replies.data.children, link_id, sort, renderer, tree);
 						tree.push(CommentTreeEvent::CloseReplies);
 					}
 				}
@@ -1002,12 +1009,13 @@ fn append_comments(children: &[CommentChild], link_id: &str, sort: &str, tree: &
 	}
 }
 
-fn comment_view(comment: &Comment) -> CommentView {
+fn comment_view(comment: &Comment, renderer: markdown::Renderer<'_>) -> CommentView {
 	CommentView {
 		id: comment.id.clone(),
 		author: display_author(&comment.author),
 		author_url: author_path(&comment.author),
-		body: comment.body.clone(),
+		body: String::new(),
+		body_html: renderer.render(&comment.body, comment.extra.get("media_metadata")),
 		score: signed_compact(comment.score),
 		age: age(comment.created_utc),
 		permalink: format!("#comment-{}", comment.id),
@@ -1027,6 +1035,7 @@ fn more_view(more: &More, link_id: &str, sort: &str) -> CommentView {
 		} else {
 			format!("{} more replies", compact(more.count))
 		},
+		body_html: String::new(),
 		score: String::new(),
 		age: String::new(),
 		permalink: if more.children.is_empty() {
@@ -1083,27 +1092,43 @@ fn more_comments_url(children: &[String], link_id: &str, parent_id: &str, sort: 
 	format!("/more-comments?{}", query.finish())
 }
 
-fn append_flat_comments(children: &[CommentChild], parent_id: &str, link_id: &str, sort: &str, visited: &mut HashSet<String>, tree: &mut Vec<CommentTreeEvent>) {
+fn append_flat_comments(
+	children: &[CommentChild],
+	parent_id: &str,
+	link_id: &str,
+	sort: &str,
+	renderer: markdown::Renderer<'_>,
+	visited: &mut HashSet<String>,
+	tree: &mut Vec<CommentTreeEvent>,
+) {
 	for child in children {
 		if child_parent_id(child) == parent_id && !visited.contains(child_name(child)) {
-			append_flat_comment(child, children, link_id, sort, visited, tree);
+			append_flat_comment(child, children, link_id, sort, renderer, visited, tree);
 		}
 	}
 }
 
-fn append_flat_comment(child: &CommentChild, children: &[CommentChild], link_id: &str, sort: &str, visited: &mut HashSet<String>, tree: &mut Vec<CommentTreeEvent>) {
+fn append_flat_comment(
+	child: &CommentChild,
+	children: &[CommentChild],
+	link_id: &str,
+	sort: &str,
+	renderer: markdown::Renderer<'_>,
+	visited: &mut HashSet<String>,
+	tree: &mut Vec<CommentTreeEvent>,
+) {
 	if !visited.insert(child_name(child).to_owned()) {
 		return;
 	}
 
 	match child {
 		CommentChild::Comment(comment) => {
-			tree.push(CommentTreeEvent::Open(Box::new(comment_view(&comment.data))));
+			tree.push(CommentTreeEvent::Open(Box::new(comment_view(&comment.data, renderer))));
 			let mut replies = Vec::new();
 			if let CommentReplies::Listing(listing) = &comment.data.replies {
-				append_comments(&listing.data.children, link_id, sort, &mut replies);
+				append_comments(&listing.data.children, link_id, sort, renderer, &mut replies);
 			}
-			append_flat_comments(children, &comment.data.name, link_id, sort, visited, &mut replies);
+			append_flat_comments(children, &comment.data.name, link_id, sort, renderer, visited, &mut replies);
 			if !replies.is_empty() {
 				tree.push(CommentTreeEvent::OpenReplies);
 				tree.extend(replies);

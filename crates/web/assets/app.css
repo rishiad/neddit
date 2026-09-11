@@ -242,6 +242,14 @@ a:focus-visible {
   object-fit: contain;
 }
 
+.video-poster-link {
+  display: grid;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  place-items: center;
+  color: #fff;
+}
+
 .video-placeholder {
   width: 100%;
   aspect-ratio: 16 / 9;
@@ -941,6 +949,36 @@ a:focus-visible {
 
 .rich-text code {
   font-size: 0.88em;
+}
+
+.rich-text img {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+}
+
+.md-spoiler-text {
+  border-radius: 2px;
+  background: var(--text);
+  color: transparent;
+  cursor: pointer;
+}
+
+.md-spoiler-text a {
+  color: transparent;
+}
+
+.md-spoiler-text:hover,
+.md-spoiler-text:focus {
+  background: var(--border);
+  color: inherit;
+  outline: none;
+}
+
+.md-spoiler-text:hover a,
+.md-spoiler-text:focus a {
+  color: var(--link);
 }
 
 .rich-text table {

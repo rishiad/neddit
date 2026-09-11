@@ -1,6 +1,6 @@
 <section id="post-gallery" class="post-gallery" aria-label="Image gallery">
   <a class="gallery-media-link" href="{{ gallery.image.url }}">
-    <img class="gallery-media" src="{{ gallery.image.url }}" alt="{{ gallery.image.alt }}" decoding="async">
+    {% if gallery.image.inline %}<img class="gallery-media" src="{{ gallery.image.url }}" alt="{{ gallery.image.alt }}" decoding="async">{% else %}View {{ gallery.image.alt }}{% endif %}
   </a>
   {% match gallery.image.caption %}
     {% when Some with (caption) %}<p class="gallery-caption">{{ caption }}</p>

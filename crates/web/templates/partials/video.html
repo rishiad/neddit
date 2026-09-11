@@ -2,7 +2,7 @@
   <div class="video-stage">
     {% match video.poster %}
       {% when Some with (poster) %}
-        <img class="video-poster" src="{{ poster }}" alt="" loading="lazy" decoding="async">
+        {% if post.inline_image %}<img class="video-poster" src="{{ poster }}" alt="" loading="lazy" decoding="async">{% else %}<a class="video-poster-link" href="{{ poster }}">View preview image</a>{% endif %}
       {% when None %}
         <div class="video-placeholder" aria-hidden="true"></div>
     {% endmatch %}

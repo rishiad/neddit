@@ -3,6 +3,7 @@
 mod app;
 mod custom_feed;
 mod error;
+mod markdown;
 mod search;
 mod view;
 
@@ -17,6 +18,7 @@ use axum::{
 	Router,
 };
 use neddit_api::{media::MediaSigner, server::MediaProxy, service::RedditService};
+use serde::{Deserialize, Serialize};
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 #[cfg(debug_assertions)]
 use tower_livereload::LiveReloadLayer;
@@ -28,11 +30,20 @@ const CONTENT_SECURITY_POLICY: &str =
 const CONTENT_SECURITY_POLICY: &str =
 	"default-src 'none'; style-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageDisplay {
+	Inline,
+	#[default]
+	Link,
+}
+
 #[derive(Clone)]
 struct WebState {
 	service: RedditService,
 	signer: MediaSigner,
 	media: MediaProxy,
+	image_display: ImageDisplay,
 }
 
 impl FromRef<WebState> for RedditService {
@@ -53,12 +64,19 @@ impl FromRef<WebState> for MediaProxy {
 	}
 }
 
-pub fn router(service: RedditService, media: MediaProxy) -> Router {
+impl FromRef<WebState> for ImageDisplay {
+	fn from_ref(state: &WebState) -> Self {
+		state.image_display
+	}
+}
+
+pub fn router(service: RedditService, media: MediaProxy, image_display: ImageDisplay) -> Router {
 	let video_enabled = media.video_enabled();
 	let state = WebState {
 		service,
 		signer: media.signer().clone(),
 		media: media.clone(),
+		image_display,
 	};
 	let mut app = Router::new()
 		.route("/", get(app::front_page))

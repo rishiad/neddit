@@ -25,12 +25,16 @@ pub struct MediaSigner {
 	policy_scope: &'static str,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DomainPolicy {
-	navigation: Arc<[HostPattern]>,
-	shortlinks: Arc<[HostPattern]>,
-	media: Arc<[HostPattern]>,
+	navigation: DomainSet,
+	shortlinks: DomainSet,
+	media: DomainSet,
 }
+
+/// A compiled set of exact domains and `*.` subdomain patterns.
+#[derive(Clone, Debug, Default)]
+pub struct DomainSet(Arc<[HostPattern]>);
 
 #[derive(Clone, Debug)]
 struct HostPattern {
@@ -41,9 +45,9 @@ struct HostPattern {
 impl DomainPolicy {
 	pub fn new(navigation: &[String], shortlinks: &[String], media: &[String]) -> Result<Self, MediaUrlError> {
 		Ok(Self {
-			navigation: parse_patterns(navigation)?.into(),
-			shortlinks: parse_patterns(shortlinks)?.into(),
-			media: parse_patterns(media)?.into(),
+			navigation: DomainSet::new(navigation)?,
+			shortlinks: DomainSet::new(shortlinks)?,
+			media: DomainSet::new(media)?,
 		})
 	}
 
@@ -52,25 +56,32 @@ impl DomainPolicy {
 	}
 
 	fn is_navigation_host(&self, host: &str) -> bool {
-		matches_host(&self.navigation, host)
+		self.navigation.matches(host)
 	}
 
 	fn is_shortlink_host(&self, host: &str) -> bool {
-		matches_host(&self.shortlinks, host)
+		self.shortlinks.matches(host)
 	}
 
 	fn is_media_host(&self, host: &str) -> bool {
-		matches_host(&self.media, host)
+		self.media.matches(host)
 	}
 }
 
-impl Default for DomainPolicy {
-	fn default() -> Self {
-		Self {
-			navigation: Arc::from([]),
-			shortlinks: Arc::from([]),
-			media: Arc::from([]),
-		}
+impl DomainSet {
+	/// Compile domain patterns.
+	///
+	/// # Errors
+	///
+	/// Returns an error when a pattern contains a scheme, port, IP address, or invalid wildcard.
+	pub fn new(values: &[String]) -> Result<Self, MediaUrlError> {
+		Ok(Self(parse_patterns(values)?.into()))
+	}
+
+	/// Return whether a host matches this set.
+	pub fn matches(&self, host: &str) -> bool {
+		let host = host.trim_end_matches('.').to_ascii_lowercase();
+		self.0.iter().any(|pattern| pattern.matches(&host))
 	}
 }
 
@@ -355,10 +366,6 @@ impl HostPattern {
 			host == self.domain
 		}
 	}
-}
-
-fn matches_host(patterns: &[HostPattern], host: &str) -> bool {
-	patterns.iter().any(|pattern| pattern.matches(host))
 }
 
 fn local_path(target: &Url) -> String {

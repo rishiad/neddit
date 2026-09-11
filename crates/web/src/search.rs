@@ -5,7 +5,6 @@ use axum::extract::{Query, State};
 use neddit_api::{
 	media::MediaSigner,
 	search::Request,
-	server::MediaProxy,
 	service::{ListingTime, RedditService},
 };
 use url::form_urlencoded;
@@ -59,7 +58,6 @@ fn excerpt(source: &str, start: usize, end: usize) -> (String, String, String) {
 pub async fn page(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
-	State(media): State<MediaProxy>,
 	State(features): State<WebFeatures>,
 	Query(request): Query<Request>,
 ) -> SearchTemplate {
@@ -70,7 +68,7 @@ pub async fn page(
 	}
 	match service.search_ql(&request).await {
 		Ok(page) => {
-			view.results = page.items.iter().filter_map(|item| search_result(item, &signer, media.video_support())).collect();
+			view.results = page.items.iter().filter_map(|item| search_result(item, &signer)).collect();
 			view.result_count = view.results.len();
 			view.searched = true;
 			let previous_url = page.previous_cursor.as_deref().map(|cursor| search_page_url(&request, kind, cursor)).unwrap_or_default();

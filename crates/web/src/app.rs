@@ -11,7 +11,6 @@ use neddit_api::{
 		CommentQuery, CommentSort, ListingQuery, ListingTime, MoreChildrenQuery, PostSort, RedditService, ServiceError, ThreadCommentSearchQuery, UserHistoryQuery,
 		UserHistorySort, WikiPageQuery,
 	},
-	video::VideoSupport,
 };
 use serde::Deserialize;
 
@@ -20,8 +19,9 @@ use crate::{
 	markdown,
 	view::{
 		comment_sort_controls, comment_tree, community_view, feed_controls, feed_item, feed_pagination, gallery_view, generated_wiki_index, has_public_wiki_pages, has_wiki_page,
-		loaded_comment_tree, post_result, post_view, search_comment_tree, search_result, subreddit_feed_item, user_controls, user_profile, wiki_path, wiki_view, FeedTemplate,
-		GalleryTemplate, MoreCommentsTemplate, PostContentTemplate, PostTemplate, SearchResultView, SubredditTemplate, UserTemplate, VideoPlayerTemplate, WikiTemplate,
+		is_external_video, loaded_comment_tree, post_result, post_view, search_comment_tree, search_result, subreddit_feed_item, user_controls, user_profile, wiki_path,
+		wiki_view, FeedTemplate, GalleryTemplate, MoreCommentsTemplate, PostContentTemplate, PostTemplate, SearchResultView, SubredditTemplate, UserTemplate, VideoPlayerTemplate,
+		WikiTemplate,
 	},
 	ImageDisplay, WebFeatures,
 };
@@ -29,9 +29,8 @@ use crate::{
 const PAGE_SIZE: u8 = 25;
 const MORE_COMMENTS_BATCH_SIZE: usize = 100;
 
-#[derive(Clone, Copy)]
 struct PostMedia {
-	video_support: VideoSupport,
+	video: MediaProxy,
 	image_display: ImageDisplay,
 	features: WebFeatures,
 }
@@ -61,7 +60,7 @@ pub struct MoreCommentsQuery {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct VideoPlayerQuery {
-	url: String,
+	id: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -180,29 +179,26 @@ struct UserActivityPage {
 pub async fn user_posts(
 	state: State<RedditService>,
 	signer: State<MediaSigner>,
-	media: State<MediaProxy>,
 	features: State<WebFeatures>,
 	path: Path<String>,
 	query: Query<FeedQuery>,
 ) -> Result<UserTemplate, AppError> {
-	user_page(state, signer, media, features, path, query, UserSection::Posts).await
+	user_page(state, signer, features, path, query, UserSection::Posts).await
 }
 
 pub async fn user_comments(
 	state: State<RedditService>,
 	signer: State<MediaSigner>,
-	media: State<MediaProxy>,
 	features: State<WebFeatures>,
 	path: Path<String>,
 	query: Query<FeedQuery>,
 ) -> Result<UserTemplate, AppError> {
-	user_page(state, signer, media, features, path, query, UserSection::Comments).await
+	user_page(state, signer, features, path, query, UserSection::Comments).await
 }
 
 async fn user_page(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
-	State(media): State<MediaProxy>,
 	State(features): State<WebFeatures>,
 	Path(username): Path<String>,
 	Query(query): Query<FeedQuery>,
@@ -225,7 +221,7 @@ async fn user_page(
 		..UserHistoryQuery::default()
 	};
 	let (activity, user) = tokio::try_join!(
-		user_activity(&service, &signer, media.video_support(), &username, &history_query, section),
+		user_activity(&service, &signer, &username, &history_query, section),
 		service.user_about(&username, Access::Standard),
 	)?;
 	let posts_url = format!("/user/{username}");
@@ -252,7 +248,6 @@ async fn user_page(
 async fn user_activity(
 	service: &RedditService,
 	signer: &MediaSigner,
-	video_support: VideoSupport,
 	username: &str,
 	query: &UserHistoryQuery,
 	section: UserSection,
@@ -261,7 +256,7 @@ async fn user_activity(
 		UserSection::Posts => {
 			let listing = service.user_submitted(username, query, Access::Standard).await?;
 			let before = listing.data.before.clone().or_else(|| listing.data.children.first().map(|thing| thing.data.name.clone()));
-			let results = listing.data.children.iter().map(|thing| post_result(&thing.data, signer, video_support)).collect();
+			let results = listing.data.children.iter().map(|thing| post_result(&thing.data, signer)).collect();
 			Ok(UserActivityPage {
 				before,
 				after: listing.data.after,
@@ -275,7 +270,7 @@ async fn user_activity(
 				.before
 				.clone()
 				.or_else(|| listing.data.children.first().map(public_fullname).map(str::to_owned));
-			let results = listing.data.children.iter().filter_map(|item| search_result(item, signer, video_support)).collect();
+			let results = listing.data.children.iter().filter_map(|item| search_result(item, signer)).collect();
 			Ok(UserActivityPage {
 				before,
 				after: listing.data.after,
@@ -382,7 +377,7 @@ pub async fn post_comments(
 		service,
 		signer,
 		PostMedia {
-			video_support: media.video_support(),
+			video: media,
 			image_display,
 			features,
 		},
@@ -407,7 +402,7 @@ pub async fn subreddit_post_comments(
 		service,
 		signer,
 		PostMedia {
-			video_support: media.video_support(),
+			video: media,
 			image_display,
 			features,
 		},
@@ -432,7 +427,7 @@ pub async fn post_permalink(
 		service,
 		signer,
 		PostMedia {
-			video_support: media.video_support(),
+			video: media,
 			image_display,
 			features,
 		},
@@ -457,7 +452,7 @@ pub async fn post_comment_permalink(
 		service,
 		signer,
 		PostMedia {
-			video_support: media.video_support(),
+			video: media,
 			image_display,
 			features,
 		},
@@ -482,7 +477,7 @@ pub async fn subreddit_post_permalink(
 		service,
 		signer,
 		PostMedia {
-			video_support: media.video_support(),
+			video: media,
 			image_display,
 			features,
 		},
@@ -507,7 +502,7 @@ pub async fn subreddit_post_comment_permalink(
 		service,
 		signer,
 		PostMedia {
-			video_support: media.video_support(),
+			video: media,
 			image_display,
 			features,
 		},
@@ -557,9 +552,25 @@ pub async fn more_comments(
 	})
 }
 
-pub async fn video_player(State(media): State<MediaProxy>, Query(query): Query<VideoPlayerQuery>) -> Result<VideoPlayerTemplate, neddit_api::video::VideoError> {
+pub async fn video_player(
+	State(service): State<RedditService>,
+	State(media): State<MediaProxy>,
+	Query(query): Query<VideoPlayerQuery>,
+) -> Result<VideoPlayerTemplate, AppError> {
+	let post = service
+		.posts_by_id(&format!("t3_{}", query.id), Access::Standard)
+		.await?
+		.data
+		.children
+		.into_iter()
+		.find(|thing| thing.data.id == query.id)
+		.ok_or(AppError::PostNotFound)?
+		.data;
+	if !is_external_video(&post) {
+		return Err(AppError::NotExternalVideo);
+	}
 	Ok(VideoPlayerTemplate {
-		playback: media.resolve_video(&query.url).await?,
+		playback: media.resolve_video(&post.url).await?,
 	})
 }
 
@@ -599,7 +610,7 @@ pub async fn post_content(
 		.next()
 		.ok_or(AppError::PostNotFound)?
 		.data;
-	let mut post = post_view(&post, &signer, media.video_support(), image_display);
+	let mut post = post_view(&post, &signer, media.video_allowed(&post.url), image_display);
 	post.hide_content = false;
 	Ok(PostContentTemplate { post })
 }
@@ -650,7 +661,7 @@ async fn post_page(
 		(post, tree, 0)
 	};
 	let comment_count = post.num_comments;
-	let post = post_view(&post, &signer, media.video_support, media.image_display);
+	let post = post_view(&post, &signer, media.video.video_allowed(&post.url), media.image_display);
 	let search_query = search.as_deref().unwrap_or_default();
 
 	Ok(PostTemplate {

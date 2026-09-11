@@ -13,9 +13,7 @@ use axum::{
 use neddit_api::{
 	feed::{expand_rank_preset, Continuation, FeedPage, Request},
 	media::MediaSigner,
-	server::MediaProxy,
 	service::{ListingTime, RedditService},
-	video::VideoSupport,
 };
 
 #[derive(Template, WebTemplate)]
@@ -33,44 +31,32 @@ pub async fn controls(Query(request): Query<Request>) -> FeedControls {
 	}
 }
 
-pub async fn builder(State(service): State<RedditService>, State(signer): State<MediaSigner>, State(media): State<MediaProxy>, Query(request): Query<Request>) -> Response {
-	render(service, signer, media, request, "/feeds", String::new()).await
+pub async fn builder(State(service): State<RedditService>, State(signer): State<MediaSigner>, Query(request): Query<Request>) -> Response {
+	render(service, signer, request, "/feeds", String::new()).await
 }
 
-pub async fn page(State(service): State<RedditService>, State(signer): State<MediaSigner>, State(media): State<MediaProxy>, Query(request): Query<Request>) -> Response {
-	render(service, signer, media, request, "/feed", String::new()).await
+pub async fn page(State(service): State<RedditService>, State(signer): State<MediaSigner>, Query(request): Query<Request>) -> Response {
+	render(service, signer, request, "/feed", String::new()).await
 }
 
-pub async fn create(
-	State(service): State<RedditService>,
-	State(signer): State<MediaSigner>,
-	State(media): State<MediaProxy>,
-	headers: HeaderMap,
-	Form(request): Form<Request>,
-) -> Response {
+pub async fn create(State(service): State<RedditService>, State(signer): State<MediaSigner>, headers: HeaderMap, Form(request): Form<Request>) -> Response {
 	if headers.get("sec-fetch-site").is_some_and(|site| site == "cross-site") {
 		return (StatusCode::FORBIDDEN, "Cross-site feed creation is not allowed").into_response();
 	}
 	match service.save_feed(&request).await {
-		Ok(feed) => render(service, signer, media, request, "/feeds", feed.url).await,
+		Ok(feed) => render(service, signer, request, "/feeds", feed.url).await,
 		Err(error) => (neddit_api::feed::status(&error), error.to_string()).into_response(),
 	}
 }
 
-pub async fn saved(
-	State(service): State<RedditService>,
-	State(signer): State<MediaSigner>,
-	State(media): State<MediaProxy>,
-	Path(id): Path<String>,
-	Query(continuation): Query<Continuation>,
-) -> Response {
+pub async fn saved(State(service): State<RedditService>, State(signer): State<MediaSigner>, Path(id): Path<String>, Query(continuation): Query<Continuation>) -> Response {
 	match service.saved_feed(&id, continuation).await {
-		Ok(request) => render(service, signer, media, request, &format!("/f/{id}"), String::new()).await,
+		Ok(request) => render(service, signer, request, &format!("/f/{id}"), String::new()).await,
 		Err(error) => (neddit_api::feed::status(&error), error.to_string()).into_response(),
 	}
 }
 
-async fn render(service: RedditService, signer: MediaSigner, media: MediaProxy, request: Request, base: &str, short_url: String) -> Response {
+async fn render(service: RedditService, signer: MediaSigner, request: Request, base: &str, short_url: String) -> Response {
 	let show_builder = base == "/feeds";
 	let mut view = form(&request, service.allows_nsfw(), show_builder);
 	view.create_action = (show_builder && service.shortlinks_enabled()).then_some("/feeds");
@@ -90,7 +76,7 @@ async fn render(service: RedditService, signer: MediaSigner, media: MediaProxy, 
 	}
 	let status = match service.custom_feed(&request).await {
 		Ok(page) => {
-			publish(&request, page, &signer, media.video_support(), base, &mut view);
+			publish(&request, page, &signer, base, &mut view);
 			StatusCode::OK
 		}
 		Err(error) => {
@@ -101,12 +87,8 @@ async fn render(service: RedditService, signer: MediaSigner, media: MediaProxy, 
 	(status, view).into_response()
 }
 
-fn publish(request: &Request, page: FeedPage, signer: &MediaSigner, video_support: VideoSupport, base: &str, view: &mut CustomFeedTemplate) {
-	view.items = page
-		.items
-		.iter()
-		.map(|result| custom_feed_item(&result.post.data, signer, video_support, request.include_nsfw))
-		.collect();
+fn publish(request: &Request, page: FeedPage, signer: &MediaSigner, base: &str, view: &mut CustomFeedTemplate) {
+	view.items = page.items.iter().map(|result| custom_feed_item(&result.post.data, signer, request.include_nsfw)).collect();
 	view.result_count = view.items.len();
 	view.searched = true;
 	view.coverage = page.coverage;

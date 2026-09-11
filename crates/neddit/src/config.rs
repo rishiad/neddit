@@ -1,5 +1,4 @@
 use std::{
-	collections::HashSet,
 	fs,
 	net::SocketAddr,
 	path::{Path, PathBuf},
@@ -8,9 +7,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use neddit_api::media::{DomainPolicy, MediaUrlError};
+use neddit_api::media::{DomainPolicy, DomainSet, MediaUrlError};
 use neddit_api::storage::{CacheConfig, ShortlinkConfig};
-use neddit_api::video::VideoProvider;
 use neddit_web::ImageDisplay;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -55,8 +53,9 @@ pub struct MediaConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct VideoConfig {
-	pub providers: Vec<VideoProvider>,
+	pub enabled: bool,
 	pub executable: PathBuf,
+	pub excluded_domains: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -116,9 +115,10 @@ impl Config {
 		if self.video.executable.as_os_str().is_empty() {
 			return Err(ConfigError::EmptyVideoExecutable);
 		}
-		if let Some(provider) = duplicate(&self.video.providers) {
-			return Err(ConfigError::DuplicateVideoProvider(provider));
+		if self.video.enabled && !self.server.web {
+			return Err(ConfigError::VideoNeedsWeb);
 		}
+		self.video_exclusions()?;
 		self.domain_policy()?;
 		tracing_subscriber::EnvFilter::try_new(&self.logging.filter).map_err(|source| ConfigError::LogFilter { source })?;
 		Ok(())
@@ -131,6 +131,15 @@ impl Config {
 	/// Returns an error when a domain contains a scheme, wildcard, port, or IP address.
 	pub fn domain_policy(&self) -> Result<DomainPolicy, ConfigError> {
 		DomainPolicy::new(&self.domains.navigation, &self.domains.shortlinks, &self.domains.media).map_err(ConfigError::Domains)
+	}
+
+	/// Compile the external video exclusion patterns.
+	///
+	/// # Errors
+	///
+	/// Returns an error when a pattern is not a domain or subdomain wildcard.
+	pub fn video_exclusions(&self) -> Result<DomainSet, ConfigError> {
+		DomainSet::new(&self.video.excluded_domains).map_err(ConfigError::VideoDomains)
 	}
 }
 
@@ -154,8 +163,9 @@ impl Default for Config {
 				signing_key_file: None,
 			},
 			video: VideoConfig {
-				providers: Vec::new(),
+				enabled: false,
 				executable: "yt-dlp".into(),
+				excluded_domains: Vec::new(),
 			},
 			logging: LoggingConfig {
 				filter: "info".into(),
@@ -165,11 +175,6 @@ impl Default for Config {
 			shortlinks: ShortlinkConfig::default(),
 		}
 	}
-}
-
-fn duplicate<T: Copy + Eq + std::hash::Hash>(values: &[T]) -> Option<T> {
-	let mut seen = HashSet::new();
-	values.iter().copied().find(|value| !seen.insert(*value))
 }
 
 fn defaults_document() -> Result<toml::Value, ConfigError> {
@@ -224,8 +229,10 @@ pub enum ConfigError {
 	InvalidListenAddress(String),
 	#[error("video.executable cannot be empty")]
 	EmptyVideoExecutable,
-	#[error("video provider `{0:?}` is configured more than once")]
-	DuplicateVideoProvider(VideoProvider),
+	#[error("video.enabled requires server.web")]
+	VideoNeedsWeb,
+	#[error("video.excluded_domains contains an invalid entry")]
+	VideoDomains(#[source] MediaUrlError),
 	#[error("logging.filter is invalid")]
 	LogFilter {
 		#[source]

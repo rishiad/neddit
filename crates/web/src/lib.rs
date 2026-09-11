@@ -83,7 +83,7 @@ impl FromRef<WebState> for WebFeatures {
 }
 
 pub fn router(service: RedditService, media: MediaProxy, image_display: ImageDisplay, custom_feeds_enabled: bool) -> Router {
-	let video_enabled = !media.video_support().is_empty();
+	let video_enabled = media.video_enabled();
 	let state = WebState {
 		service,
 		signer: media.signer().clone(),

@@ -7,12 +7,14 @@ use futures_lite::{future::Boxed, FutureExt};
 use percent_encoding::{percent_encode, CONTROLS};
 use serde_json::Value;
 use std::{
-	net::{IpAddr, Ipv4Addr},
+	io,
+	net::{IpAddr, Ipv4Addr, Ipv6Addr},
 	result::Result,
 	time::Duration,
 };
 use tracing::{debug, trace, warn};
 use url::form_urlencoded;
+use wreq::dns::{Addrs, Name, Resolve, Resolving};
 use wreq::redirect::Policy;
 use wreq::{header as wreq_header, Client as WreqClient, EmulationFactory, Method, Response as WreqResponse};
 use wreq_util::{Emulation, EmulationOS, EmulationOption};
@@ -56,6 +58,7 @@ impl Access {
 #[derive(Clone)]
 pub struct RedditClient {
 	http: WreqClient,
+	external_http: WreqClient,
 	oauth: OAuthHandle,
 	domains: DomainPolicy,
 	cache: Option<crate::storage::Cache>,
@@ -67,6 +70,61 @@ struct UpstreamResponse {
 	rate_limit_reset: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+struct PublicDns;
+
+impl Resolve for PublicDns {
+	fn resolve(&self, name: Name) -> Resolving {
+		let host = name.as_str().to_owned();
+		Box::pin(async move {
+			let addresses = tokio::net::lookup_host((host.as_str(), 0)).await?.collect::<Vec<_>>();
+			if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
+				return Err(io::Error::other("DNS name resolved outside the public internet").into());
+			}
+			Ok(Box::new(addresses.into_iter()) as Addrs)
+		})
+	}
+}
+
+pub(crate) fn is_public_ip(address: IpAddr) -> bool {
+	match address {
+		IpAddr::V4(address) => is_public_ipv4(address),
+		IpAddr::V6(address) => is_public_ipv6(address),
+	}
+}
+
+fn is_public_ipv4(address: Ipv4Addr) -> bool {
+	let [a, b, c, _] = address.octets();
+	!(a == 0
+		|| a == 10
+		|| a == 127
+		|| (a == 100 && (64..=127).contains(&b))
+		|| (a == 169 && b == 254)
+		|| (a == 172 && (16..=31).contains(&b))
+		|| (a == 192 && b == 0 && c == 0)
+		|| (a == 192 && b == 0 && c == 2)
+		|| (a == 192 && b == 88 && c == 99)
+		|| (a == 192 && b == 168)
+		|| (a == 198 && (b == 18 || b == 19))
+		|| (a == 198 && b == 51 && c == 100)
+		|| (a == 203 && b == 0 && c == 113)
+		|| a >= 224)
+}
+
+fn is_public_ipv6(address: Ipv6Addr) -> bool {
+	if let Some(address) = address.to_ipv4() {
+		return is_public_ipv4(address);
+	}
+	let segments = address.segments();
+	segments[0] & 0xe000 == 0x2000
+		&& !address.is_unspecified()
+		&& !address.is_loopback()
+		&& !address.is_multicast()
+		&& !address.is_unique_local()
+		&& !address.is_unicast_link_local()
+		&& !(segments[0] == 0x2001 && segments[1] == 0x0db8)
+}
+
 impl RedditClient {
 
 	pub async fn new() -> Result<Self, ClientError> {
@@ -75,9 +133,11 @@ impl RedditClient {
 
 	pub async fn with_domains(domains: DomainPolicy) -> Result<Self, ClientError> {
 		let http = Self::build_http_client()?;
+		let external_http = Self::build_external_http_client()?;
 		let oauth = OAuthHandle::start(http.clone()).await?;
 		Ok(Self {
 			http,
+			external_http,
 			oauth,
 			domains,
 			cache: None,
@@ -99,6 +159,14 @@ impl RedditClient {
 
 	/// Build the HTTP client used for Reddit and media requests.
 	fn build_http_client() -> Result<WreqClient, ClientError> {
+		Self::build_http_client_with(false)
+	}
+
+	fn build_external_http_client() -> Result<WreqClient, ClientError> {
+		Self::build_http_client_with(true)
+	}
+
+	fn build_http_client_with(public_dns: bool) -> Result<WreqClient, ClientError> {
 		// Keeping this list short to aid in privacy.
 		// The more emulations, the more unique a fingerprint each instance has.
 		// But some emulations should increase evasiveness.
@@ -113,11 +181,11 @@ impl RedditClient {
 			.emulation();
 
 		debug!(?emulation, "HTTP client initialized");
-		WreqClient::builder()
-			.emulation(emulation)
-			.redirect(Policy::none())
-			.build()
-			.map_err(ClientError::BuildClient)
+		let mut builder = WreqClient::builder().emulation(emulation).redirect(Policy::none());
+		if public_dns {
+			builder = builder.dns_resolver(PublicDns);
+		}
+		builder.build().map_err(ClientError::BuildClient)
 	}
 
 	/// Gets the canonical path for a resource on Reddit. This is accomplished by
@@ -205,7 +273,7 @@ impl RedditClient {
 
 	pub async fn proxy_external(&self, url: String, request_headers: &HeaderMap, user_agent: Option<&str>) -> Result<Response, ClientError> {
 		let uri = wreq::Uri::try_from(&url).map_err(|_| ClientError::InvalidProxyUrl { url: url.clone() })?;
-		let mut builder = self.http.get(uri).local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+		let mut builder = self.external_http.get(uri).local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
 		for &key in &["Range", "If-Modified-Since", "Cache-Control"] {
 			if let Some(value) = request_headers.get(key) {
 				let value = if key == "Range" {

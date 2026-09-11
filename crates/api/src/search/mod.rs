@@ -435,7 +435,7 @@ pub fn domain(value: &str) -> Option<String> {
 	{
 		return None;
 	}
-	Some(host)
+	Some(host.strip_prefix("www.").unwrap_or(&host).to_owned())
 }
 
 fn instant(value: &str) -> Option<i128> {

@@ -11,7 +11,7 @@ use neddit_api::{
 	server::MediaProxy,
 	service::{ContentPolicy, RedditService},
 	storage::{Cache, Shortlinks},
-	video::{VideoResolver, VideoSupport},
+	video::VideoResolver,
 };
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 		api = config.server.api,
 		custom_feeds = config.server.custom_feeds,
 		allow_nsfw = config.server.allow_nsfw,
-		video_providers = config.video.providers.len(),
+		video_enabled = config.video.enabled,
 		"starting neddit"
 	);
 	let listener = server::bind(&config.server.listen).await?;
@@ -77,8 +77,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 	};
 	let reddit = RedditClient::with_domains(domains).await?.with_cache(cache.clone());
 	let service = RedditService::with_content_policy(reddit.clone(), ContentPolicy::new(config.server.allow_nsfw)).with_storage(cache, shortlinks);
-	let video_support = VideoSupport::new(&config.video.providers);
-	let video = VideoResolver::new(&config.video.executable, video_support);
+	let video_exclusions = config.video_exclusions()?;
+	let video = config.video.enabled.then(|| VideoResolver::new(&config.video.executable, video_exclusions));
 	let media = MediaProxy::new(reddit.clone(), signer, video);
 	let app = neddit::router(
 		service,

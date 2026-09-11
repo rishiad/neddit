@@ -10,7 +10,7 @@ use askama_web::WebTemplate;
 
 use neddit_api::media::MediaSigner;
 use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, PublicThing, Subreddit, User, WikiPage, WikiPageListing};
-use neddit_api::video::{VideoPlayback, VideoSupport};
+use neddit_api::video::VideoPlayback;
 use serde_json::Value;
 use url::{form_urlencoded, Url};
 
@@ -378,7 +378,7 @@ pub fn subreddit_feed_item(post: &Post, signer: &MediaSigner, subreddit_is_nsfw:
 	item
 }
 
-pub fn feed_item_with_video(post: &Post, signer: &MediaSigner, video_support: VideoSupport) -> FeedItem {
+fn feed_item_with_video(post: &Post, signer: &MediaSigner, video_enabled: bool) -> FeedItem {
 	let mut item = feed_item(post, signer);
 	if let Some(source) = reddit_video_source(post).and_then(|source| signer.signed_media_url(source)) {
 		item.video = Some(VideoView {
@@ -386,9 +386,9 @@ pub fn feed_item_with_video(post: &Post, signer: &MediaSigner, video_support: Vi
 			poster: preview_url(post).and_then(|url| signer.signed_media_url(url)),
 			source: Some(source),
 		});
-	} else if video_support.supports(&post.url) {
+	} else if video_enabled && is_external_video(post) {
 		let mut query = form_urlencoded::Serializer::new(String::new());
-		query.append_pair("url", &post.url);
+		query.append_pair("id", &post.id);
 		item.video = Some(VideoView {
 			player_url: format!("/video/player?{}", query.finish()),
 			poster: preview_url(post).and_then(|url| signer.signed_media_url(url)),
@@ -413,8 +413,20 @@ fn is_reddit_video(post: &Post) -> bool {
 		|| post.extra.get("post_hint").and_then(Value::as_str) == Some("hosted:video")
 }
 
-pub fn custom_feed_item(post: &Post, signer: &MediaSigner, video_support: VideoSupport, include_nsfw: bool) -> FeedItem {
-	let mut item = feed_item_with_video(post, signer, video_support);
+pub fn is_external_video(post: &Post) -> bool {
+	if post.is_self || is_reddit_video(post) {
+		return false;
+	}
+	if post.extra.get("post_hint").and_then(Value::as_str) == Some("rich:video") {
+		return true;
+	}
+	["secure_media", "media"]
+		.into_iter()
+		.any(|key| post.extra.get(key).and_then(|media| media.pointer("/oembed/type")).and_then(Value::as_str) == Some("video"))
+}
+
+pub fn custom_feed_item(post: &Post, signer: &MediaSigner, include_nsfw: bool) -> FeedItem {
+	let mut item = feed_item(post, signer);
 	item.flair = post_flair(post);
 	if include_nsfw {
 		item.badges.retain(|badge| *badge != "NSFW");
@@ -442,9 +454,9 @@ fn preview_url(post: &Post) -> Option<&str> {
 	best.or_else(|| post.extra.get("thumbnail")?.as_str().filter(|url| url.starts_with("https://") || url.starts_with("//")))
 }
 
-pub fn search_result(item: &PublicThing, signer: &MediaSigner, video_support: VideoSupport) -> Option<SearchResultView> {
+pub fn search_result(item: &PublicThing, signer: &MediaSigner) -> Option<SearchResultView> {
 	match item {
-		PublicThing::Post(thing) => Some(post_result(&thing.data, signer, video_support)),
+		PublicThing::Post(thing) => Some(post_result(&thing.data, signer)),
 		PublicThing::Subreddit(thing) => {
 			let subreddit = &thing.data;
 			Some(SearchResultView {
@@ -487,8 +499,8 @@ pub fn search_result(item: &PublicThing, signer: &MediaSigner, video_support: Vi
 	}
 }
 
-pub fn post_result(post: &Post, signer: &MediaSigner, video_support: VideoSupport) -> SearchResultView {
-	let item = feed_item_with_video(post, signer, video_support);
+pub fn post_result(post: &Post, signer: &MediaSigner) -> SearchResultView {
+	let item = feed_item(post, signer);
 	SearchResultView {
 		fullname: post.name.clone(),
 		metric: item.score,
@@ -685,8 +697,8 @@ fn nonempty(value: &str) -> Option<String> {
 	(!value.is_empty()).then(|| value.to_owned())
 }
 
-pub fn post_view(post: &Post, signer: &MediaSigner, video_support: VideoSupport, image_display: ImageDisplay) -> PostView {
-	let mut item = feed_item_with_video(post, signer, video_support);
+pub fn post_view(post: &Post, signer: &MediaSigner, video_enabled: bool, image_display: ImageDisplay) -> PostView {
+	let mut item = feed_item_with_video(post, signer, video_enabled);
 	item.flair = post_flair(post);
 	let gallery = gallery_view(post, signer, image_display, 0);
 	let image_url = if gallery.is_none() && item.video.is_none() && is_image_post(post) {

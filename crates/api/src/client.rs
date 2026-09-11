@@ -4,7 +4,6 @@ mod oauth;
 use crate::media::DomainPolicy;
 use axum::{body::Body, http::HeaderMap, response::Response};
 use futures_lite::{future::Boxed, FutureExt};
-use log::{error, info, trace};
 use percent_encoding::{percent_encode, CONTROLS};
 use serde_json::Value;
 use std::{
@@ -12,6 +11,7 @@ use std::{
 	result::Result,
 	time::Duration,
 };
+use tracing::{debug, trace, warn};
 use url::form_urlencoded;
 use wreq::redirect::Policy;
 use wreq::{header as wreq_header, Client as WreqClient, EmulationFactory, Method, Response as WreqResponse};
@@ -112,7 +112,7 @@ impl RedditClient {
 			.build()
 			.emulation();
 
-		info!("Building Wreq client with random emulation {:?}", emulation);
+		debug!(?emulation, "HTTP client initialized");
 		WreqClient::builder()
 			.emulation(emulation)
 			.redirect(Policy::none())
@@ -294,10 +294,7 @@ impl RedditClient {
 				builder = builder.header(key, value);
 			}
 			let result = builder.send().await;
-			let response = result.map_err(|source| {
-				crate::dbg_msg!("{method} {url}: {}", source);
-				ClientError::Request { url: url.clone(), source }
-			})?;
+			let response = result.map_err(|source| ClientError::Request { url: url.clone(), source })?;
 			let rate_limit_reset = client.observe_rate_limit_headers(generation, &response).await;
 			if !response.status().is_redirection() || !redirect {
 				return Ok(UpstreamResponse {
@@ -401,7 +398,7 @@ impl RedditClient {
 		}
 
 		let json: Value = serde_json::from_slice(&body).map_err(|source| {
-			error!("Got an invalid response from Reddit {source}. Status code: {status}");
+			warn!(event = "upstream.invalid_response", upstream = "reddit", status = status.as_u16(), error = %source, "Reddit returned invalid JSON");
 			if status.is_server_error() {
 				ClientError::UpstreamUnavailable { status: status.as_u16(), source }
 			} else {
@@ -420,7 +417,7 @@ impl RedditClient {
 		let reason = json["reason"].as_str().unwrap_or_default();
 		let message = json["message"].as_str().unwrap_or_default();
 		if message == "Unauthorized" {
-			error!("Requesting an OAuth refresh");
+			debug!(event = "oauth.refresh_requested", reason = "unauthorized", "requesting OAuth refresh");
 			self.oauth.invalidate(generation).await;
 			return Err(ClientError::Unauthorized);
 		}
@@ -443,7 +440,14 @@ impl RedditClient {
 		let remaining = response.headers().get("x-ratelimit-remaining")?.to_str().ok()?;
 		let reset = response.headers().get("x-ratelimit-reset")?.to_str().ok()?;
 		let used = response.headers().get("x-ratelimit-used")?.to_str().ok()?;
-		trace!("Ratelimit remaining: {remaining}. Resets in {reset}. Used: {used}");
+		trace!(
+			event = "upstream.rate_limit",
+			upstream = "reddit",
+			remaining,
+			reset_seconds = reset,
+			used,
+			"Reddit rate limit observed"
+		);
 
 		if let Some(remaining) = parse_rate_limit_remaining(remaining) {
 			let reset_after = reset

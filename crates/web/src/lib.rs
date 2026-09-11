@@ -19,7 +19,7 @@ use axum::{
 };
 use neddit_api::{media::MediaSigner, server::MediaProxy, service::RedditService};
 use serde::{Deserialize, Serialize};
-use tower_http::{compression::CompressionLayer, trace::TraceLayer};
+use tower_http::compression::CompressionLayer;
 #[cfg(debug_assertions)]
 use tower_livereload::LiveReloadLayer;
 
@@ -129,10 +129,7 @@ pub fn router(service: RedditService, media: MediaProxy, image_display: ImageDis
 		.merge(neddit_api::server::with_middleware(neddit_api::server::router(media)));
 	#[cfg(debug_assertions)]
 	let app = app.layer(LiveReloadLayer::new());
-	app
-		.layer(CompressionLayer::new())
-		.layer(TraceLayer::new_for_http())
-		.layer(middleware::from_fn(security_headers))
+	app.layer(CompressionLayer::new()).layer(middleware::from_fn(security_headers))
 }
 
 fn system_routes(custom_feeds_enabled: bool) -> Router {

@@ -1,10 +1,10 @@
 use super::AuthError;
-use log::{error, info, trace, warn};
 use serde::Deserialize;
 use serde_json::json;
 use std::{collections::HashMap, time::Duration};
 use tegen::tegen::TextGenerator;
 use tokio::time::{sleep, timeout, Instant};
+use tracing::{debug, trace, warn};
 use wreq::Client as WreqClient;
 
 const MOBILE_AUTH_ENDPOINT: &str = "https://www.reddit.com/auth/v2/oauth/access-token/loid";
@@ -39,7 +39,7 @@ impl Credentials {
 		let mobile = Backend::Mobile(MobileAuth::new());
 		match Self::authenticate_with(http, mobile).await {
 			Ok(credentials) => return Ok(credentials),
-			Err(error) => warn!("Mobile OAuth authentication failed: {error}; falling back to web authentication"),
+			Err(error) => warn!(event = "oauth.backend_fallback", backend = "mobile", error = %error, "OAuth authentication failed; falling back to web authentication"),
 		}
 
 		Self::authenticate_with(http, Backend::Web(WebAuth::new())).await
@@ -54,7 +54,12 @@ impl Credentials {
 					let mut headers = backend.headers();
 					headers.insert("Authorization".to_owned(), format!("Bearer {}", token.access_token));
 					let expires_at = Instant::now().checked_add(Duration::from_secs(token.expires_in)).ok_or(AuthError::InvalidExpiry)?;
-					info!("Created {} OAuth credentials; expires in {} seconds", backend.name(), token.expires_in);
+					debug!(
+						event = "oauth.credentials_created",
+						backend = backend.name(),
+						expires_in_seconds = token.expires_in,
+						"OAuth credentials created"
+					);
 					return Ok(Self {
 						headers,
 						user_agent: backend.user_agent().to_owned(),
@@ -65,7 +70,7 @@ impl Credentials {
 				Err(_) => last_error = AuthError::Timeout,
 			}
 
-			error!("{} OAuth attempt {attempt}/{ATTEMPTS_PER_BACKEND} failed: {last_error}", backend.name());
+			warn!(event = "oauth.attempt_failed", backend = backend.name(), attempt, max_attempts = ATTEMPTS_PER_BACKEND, error = %last_error, "OAuth attempt failed");
 			if attempt < ATTEMPTS_PER_BACKEND {
 				sleep(TOKEN_REQUEST_TIMEOUT).await;
 			}
@@ -163,7 +168,7 @@ impl MobileAuth {
 
 		request = request.header("Authorization", MOBILE_AUTHORIZATION);
 
-		trace!("Sending mobile OAuth token request");
+		trace!(backend = "mobile", "sending OAuth token request");
 		let response = request.json(&json!({ "scopes": ["*", "email", "pii"] })).send().await?;
 		self.response_headers.clear();
 		capture_response_headers(response.headers(), &mut self.response_headers)?;
@@ -211,7 +216,7 @@ impl WebAuth {
 			.header("Connection", "keep-alive");
 		let body = format!("grant_type=https%3A%2F%2Foauth.reddit.com%2Fgrants%2Finstalled_client&device_id={}", self.device_id);
 
-		trace!("Sending web OAuth token request");
+		trace!(backend = "web", "sending OAuth token request");
 		let response = request.body(body).send().await?;
 		self.response_headers.clear();
 		capture_response_headers(response.headers(), &mut self.response_headers)?;
@@ -273,7 +278,7 @@ impl AndroidDevice {
 			("X-Reddit-Device-Id".to_owned(), uuid),
 		]);
 
-		info!("Created Android OAuth identity");
+		debug!(backend = "mobile", "OAuth identity created");
 		Self { headers, user_agent }
 	}
 }

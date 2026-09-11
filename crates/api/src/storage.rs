@@ -218,7 +218,7 @@ impl Cache {
 					})
 					.await;
 				if let Err(error) = result {
-					log::warn!("cache maintenance: {error}");
+					tracing::warn!(event = "cache.maintenance_failed", error = %error, "cache maintenance failed");
 				}
 			}
 		});
@@ -235,7 +235,7 @@ impl Cache {
 		let value = fetch.await?;
 		if let Ok(bytes) = serde_json::to_vec(&value) {
 			if let Err(error) = self.put(key, bytes, ttl).await {
-				log::warn!("cache write: {error}");
+				tracing::warn!(event = "cache.write_failed", error = %error, "cache write failed");
 			}
 		}
 		Ok(value)
@@ -254,11 +254,11 @@ impl Cache {
 			.await
 		{
 			Ok(value) => {
-				log::debug!("cache {}", if value.is_some() { "hit" } else { "miss" });
+				tracing::debug!(event = "cache.read", hit = value.is_some(), "cache read completed");
 				value
 			}
 			Err(error) => {
-				log::warn!("cache read: {error}");
+				tracing::warn!(event = "cache.read_failed", error = %error, "cache read failed");
 				None
 			}
 		}

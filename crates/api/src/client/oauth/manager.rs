@@ -1,5 +1,4 @@
 use super::{backend::Credentials, AuthError};
-use log::{error, trace};
 use std::{
 	future::Future,
 	pin::Pin,
@@ -14,6 +13,7 @@ use tokio::{
 	task::JoinSet,
 	time::{sleep_until, Instant},
 };
+use tracing::{error, trace, warn};
 use wreq::Client as WreqClient;
 
 const INITIAL_RATE_LIMIT: u16 = 99;
@@ -126,7 +126,7 @@ impl State {
 		self.next_generation = self.next_generation.checked_add(1).expect("OAuth generation counter overflowed");
 		let previous = std::mem::replace(&mut self.active, generation);
 		if previous.in_flight() > 0 {
-			trace!("Retiring OAuth generation {} with {} active requests", previous.id, previous.in_flight());
+			trace!(generation = previous.id, active_requests = previous.in_flight(), "retiring OAuth generation");
 			self.retiring.push(Arc::downgrade(&previous));
 		}
 
@@ -139,7 +139,7 @@ impl State {
 
 	fn observe_rate_limit(&mut self, generation: u64, remaining: u16, reset_after: Option<Duration>) {
 		if generation != self.active.id {
-			trace!("Ignoring rate limit from retired OAuth generation {generation}");
+			trace!(generation, "ignoring rate limit from retired OAuth generation");
 			return;
 		}
 
@@ -154,7 +154,7 @@ impl State {
 
 	fn invalidate(&mut self, generation: u64) -> bool {
 		if generation != self.active.id {
-			trace!("Ignoring invalidation from retired OAuth generation {generation}");
+			trace!(generation, "ignoring invalidation from retired OAuth generation");
 			return false;
 		}
 		self.remaining = 0;
@@ -307,11 +307,11 @@ async fn run_manager(
 					credentials.send_replace(state.install(new_credentials));
 				}
 				Some(Ok(Err(error))) => {
-					error!("OAuth refresh failed: {error}");
+					warn!(event = "oauth.refresh_failed", error = %error, "OAuth refresh failed");
 					state.next_refresh_at = Instant::now() + REFRESH_RETRY_DELAY;
 				}
 				Some(Err(error)) => {
-					error!("OAuth refresh task failed: {error}");
+					error!(event = "oauth.refresh_task_failed", error = %error, "OAuth refresh task failed");
 					state.next_refresh_at = Instant::now() + REFRESH_RETRY_DELAY;
 				}
 				None => {}

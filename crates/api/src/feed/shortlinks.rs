@@ -146,7 +146,7 @@ fn storage_error(error: storage::Error) -> Diagnostic {
 		storage::Error::RateLimited => Diagnostic::new("rate_limited", "Feed creation rate exceeded; retry in one minute", (0, 0)),
 		storage::Error::Capacity => Diagnostic::new("storage_full", "Feed storage capacity reached", (0, 0)),
 		error => {
-			log::error!("feed storage: {error}");
+			tracing::error!(event = "feed.storage_failed", error = %error, "feed storage failed");
 			unavailable()
 		}
 	}

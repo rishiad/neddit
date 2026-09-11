@@ -63,6 +63,15 @@ pub struct VideoConfig {
 #[serde(deny_unknown_fields)]
 pub struct LoggingConfig {
 	pub filter: String,
+	pub format: LogFormat,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+	#[default]
+	Compact,
+	Json,
 }
 
 impl Config {
@@ -151,7 +160,10 @@ impl Default for Config {
 				providers: Vec::new(),
 				executable: "yt-dlp".into(),
 			},
-			logging: LoggingConfig { filter: "info".into() },
+			logging: LoggingConfig {
+				filter: "info".into(),
+				format: LogFormat::Compact,
+			},
 			cache: CacheConfig::default(),
 			shortlinks: ShortlinkConfig::default(),
 		}

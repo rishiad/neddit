@@ -3,7 +3,7 @@ use crate::media::{MediaSigner, MediaUrlError};
 use crate::video::{decode_video_target, rewrite_hls as rewrite_video_hls, VideoError, VideoPlayback, VideoResolver, VideoSupport};
 use axum::{
 	body::{to_bytes, Body},
-	extract::{Path, Query, State},
+	extract::{MatchedPath, Path, Query, Request, State},
 	http::{header, Extensions, HeaderMap, HeaderValue, StatusCode, Version},
 	middleware::{self, Next},
 	response::{IntoResponse, Response},
@@ -11,12 +11,13 @@ use axum::{
 	Router,
 };
 use serde::Deserialize;
-use std::{io, str};
+use std::{io, str, time::Instant};
 use thiserror::Error;
 use tower_http::compression::{
 	predicate::{Predicate, SizeAbove},
 	CompressionLayer,
 };
+use tracing::Instrument as _;
 use url::Url;
 
 const COMPRESSION_MIN_SIZE: u16 = 1452;
@@ -24,6 +25,17 @@ const MANIFEST_SIZE_LIMIT: usize = 8 * 1024 * 1024;
 const MAX_MEDIA_REDIRECTS: usize = 4;
 const MEDIA_CACHE_CONTROL: &str = "public, max-age=604800, immutable";
 const VIDEO_CACHE_CONTROL: &str = "public, max-age=900";
+const HTTP_TARGET: &str = "neddit::http";
+const REQUEST_ID_HEADER: &str = "x-request-id";
+
+#[derive(Clone, Debug)]
+pub(crate) struct RequestId(String);
+
+impl RequestId {
+	pub(crate) fn as_str(&self) -> &str {
+		&self.0
+	}
+}
 
 #[derive(Clone)]
 pub struct MediaProxy {
@@ -93,9 +105,87 @@ pub fn with_middleware(app: Router) -> Router {
 		.layer(middleware::from_fn(default_headers))
 }
 
-pub async fn listen(app: Router, address: &str) -> io::Result<()> {
-	let listener = tokio::net::TcpListener::bind(address).await?;
+pub fn with_request_logging(app: Router) -> Router {
+	app.layer(middleware::from_fn(log_request))
+}
+
+pub async fn bind(address: &str) -> io::Result<tokio::net::TcpListener> {
+	tokio::net::TcpListener::bind(address).await
+}
+
+pub async fn serve(app: Router, listener: tokio::net::TcpListener) -> io::Result<()> {
 	axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await
+}
+
+async fn log_request(mut request: Request, next: Next) -> Response {
+	let started = Instant::now();
+	let request_id = RequestId(uuid::Uuid::new_v4().to_string());
+	let method = request.method().clone();
+	let route = route_label(&request);
+	let quiet = quiet_route(&route);
+	request.extensions_mut().insert(request_id.clone());
+
+	let span = tracing::info_span!(target: HTTP_TARGET, "http.request", request_id = %request_id.as_str(), %method, %route);
+	async move {
+		let mut response = next.run(request).await;
+		let status = response.status();
+		let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+		if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
+			tracing::warn!(target: HTTP_TARGET, event = "http.response", status = status.as_u16(), latency_ms, "request completed");
+		} else if quiet {
+			tracing::debug!(target: HTTP_TARGET, event = "http.response", status = status.as_u16(), latency_ms, "request completed");
+		} else {
+			tracing::info!(target: HTTP_TARGET, event = "http.response", status = status.as_u16(), latency_ms, "request completed");
+		}
+		response
+			.headers_mut()
+			.insert(REQUEST_ID_HEADER, HeaderValue::from_str(request_id.as_str()).expect("UUID is a valid header value"));
+		response
+	}
+	.instrument(span)
+	.await
+}
+
+fn route_label(request: &Request) -> String {
+	request
+		.extensions()
+		.get::<MatchedPath>()
+		.map(|path| path.as_str().to_owned())
+		.unwrap_or_else(|| fallback_route(request.uri().path()).to_owned())
+}
+
+fn fallback_route(path: &str) -> &'static str {
+	if path == "/" {
+		"/"
+	} else if path == "/healthz" {
+		"/healthz"
+	} else if path.starts_with("/assets/") {
+		"/assets/*"
+	} else if path.starts_with("/media/") {
+		"/media/*"
+	} else if path.starts_with("/video/media/") {
+		"/video/media/*"
+	} else if path.starts_with("/video/") {
+		"/video/*"
+	} else if path.starts_with("/api/") {
+		"/api/*"
+	} else if path.starts_with("/search") {
+		"/search/*"
+	} else if path.starts_with("/feed") || path.starts_with("/f/") {
+		"/feeds/*"
+	} else if path.starts_with("/r/") {
+		"/r/*"
+	} else if path.starts_with("/comments/") {
+		"/comments/*"
+	} else if path.starts_with("/user/") {
+		"/user/*"
+	} else {
+		"<unmatched>"
+	}
+}
+
+fn quiet_route(route: &str) -> bool {
+	route == "/healthz" || route.starts_with("/assets/") || route.starts_with("/media/") || route.starts_with("/video/media/")
 }
 
 async fn proxy_media(State(media): State<MediaProxy>, Path((signature, encoded)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ProxyError> {
@@ -285,8 +375,9 @@ impl IntoResponse for ProxyError {
 async fn shutdown_signal() {
 	#[cfg(windows)]
 	{
-		if let Err(error) = tokio::signal::ctrl_c().await {
-			log::error!("failed to install CTRL+C signal handler: {error}");
+		match tokio::signal::ctrl_c().await {
+			Ok(()) => tracing::info!(event = "service.shutdown_requested", signal = "CTRL+C", "shutdown requested"),
+			Err(error) => tracing::error!(event = "service.signal_failed", %error, signal = "CTRL+C", "failed to receive shutdown signal"),
 		}
 	}
 
@@ -297,19 +388,22 @@ async fn shutdown_signal() {
 			Ok(mut terminate) => {
 				tokio::select! {
 					result = tokio::signal::ctrl_c() => {
-						if let Err(error) = result {
-							log::error!("failed to install CTRL+C signal handler: {error}");
+						match result {
+							Ok(()) => tracing::info!(event = "service.shutdown_requested", signal = "CTRL+C", "shutdown requested"),
+							Err(error) => tracing::error!(event = "service.signal_failed", %error, signal = "CTRL+C", "failed to receive shutdown signal"),
 						}
 					}
-					_ = terminate.recv() => {}
+					_ = terminate.recv() => tracing::info!(event = "service.shutdown_requested", signal = "SIGTERM", "shutdown requested")
 				}
 			}
 			Err(error) => {
-				log::error!("failed to install SIGTERM signal handler: {error}");
-				if let Err(error) = tokio::signal::ctrl_c().await {
-					log::error!("failed to install CTRL+C signal handler: {error}");
+				tracing::error!(event = "service.signal_failed", %error, signal = "SIGTERM", "failed to install shutdown signal handler");
+				match tokio::signal::ctrl_c().await {
+					Ok(()) => tracing::info!(event = "service.shutdown_requested", signal = "CTRL+C", "shutdown requested"),
+					Err(error) => tracing::error!(event = "service.signal_failed", %error, signal = "CTRL+C", "failed to receive shutdown signal"),
 				}
 			}
 		}
 	}
 }
+

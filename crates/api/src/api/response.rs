@@ -4,8 +4,8 @@ use axum::{
 	http::{header, HeaderValue, StatusCode},
 	response::Response,
 };
-use log::error;
 use serde::Serialize;
+use tracing::error;
 use utoipa::ToSchema;
 
 #[derive(Serialize, ToSchema)]
@@ -22,9 +22,6 @@ where
 		Ok(value) => json(StatusCode::OK, &value),
 		Err(api_error) => {
 			let status = api_error.status();
-			if status.is_server_error() {
-				error!("Reddit API route failed: {api_error:?}");
-			}
 			json(
 				status,
 				&ErrorBody {
@@ -43,7 +40,7 @@ where
 	let (status, body) = match serde_json::to_vec(value) {
 		Ok(body) => (status, body),
 		Err(error) => {
-			error!("failed to serialize Reddit API response: {error}");
+			error!(event = "response.serialization_failed", error = %error, "failed to serialize API response");
 			(StatusCode::INTERNAL_SERVER_ERROR, br#"{"message":"Internal Server Error","error":500}"#.to_vec())
 		}
 	};

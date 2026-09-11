@@ -7,7 +7,7 @@ use axum::{
 	response::Response,
 	Router,
 };
-use log::error;
+use tracing::error;
 
 pub(super) fn with_reddit_urls(router: Router, signer: MediaSigner) -> Router {
 	router.layer(middleware::from_fn_with_state(signer, rewrite_reddit_urls))
@@ -24,14 +24,14 @@ async fn rewrite_reddit_urls(State(signer): State<MediaSigner>, request: Request
 	let body = match to_bytes(body, usize::MAX).await {
 		Ok(body) => body,
 		Err(error) => {
-			error!("failed to read API response for Reddit URL rewriting: {error}");
+			error!(event = "response.rewrite_failed", stage = "read", error = %error, "failed to rewrite API response URLs");
 			return rewrite_failure(parts);
 		}
 	};
 	let mut value = match serde_json::from_slice(&body) {
 		Ok(value) => value,
 		Err(error) => {
-			error!("failed to parse API response for Reddit URL rewriting: {error}");
+			error!(event = "response.rewrite_failed", stage = "parse", error = %error, "failed to rewrite API response URLs");
 			return rewrite_failure(parts);
 		}
 	};
@@ -39,7 +39,7 @@ async fn rewrite_reddit_urls(State(signer): State<MediaSigner>, request: Request
 	let body = match serde_json::to_vec(&value) {
 		Ok(body) => body,
 		Err(error) => {
-			error!("failed to serialize API response after Reddit URL rewriting: {error}");
+			error!(event = "response.rewrite_failed", stage = "serialize", error = %error, "failed to rewrite API response URLs");
 			return rewrite_failure(parts);
 		}
 	};

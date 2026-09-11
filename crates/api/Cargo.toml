@@ -24,7 +24,7 @@ url = "2.5.0"
 uuid = { version = "1.6.1", features = ["v4"] }
 base64 = "0.22.1"
 fastrand = "2.0.1"
-log = "0.4.20"
+tracing = "0.1.44"
 async-recursion = "1.1.1"
 tegen = "0.1.4"
 fake_user_agent = "0.2.2"

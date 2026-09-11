@@ -465,7 +465,7 @@ impl RedditService {
 					let _ = cache.put(head_key, cursor.into_bytes(), 30).await;
 				}
 				Err(error) => {
-					log::warn!("feed snapshot: {error}");
+					tracing::warn!(event = "feed.snapshot_failed", error = %error, "feed snapshot storage failed");
 					page.cursor = None;
 				}
 			}

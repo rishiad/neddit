@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 
-use std::path::PathBuf;
+use std::{env, io::IsTerminal as _, path::PathBuf};
 
 use clap::Parser;
-use neddit::config::Config;
+use neddit::config::{Config, LogFormat, LoggingConfig};
 use neddit_api::{
 	client::RedditClient,
 	media::MediaSigner,
@@ -13,7 +13,7 @@ use neddit_api::{
 	storage::{Cache, Shortlinks},
 	video::{VideoResolver, VideoSupport},
 };
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
@@ -30,7 +30,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 	let args = Args::parse();
 	let config = Config::load(args.config.as_deref())?;
 	if args.check_config {
@@ -38,22 +38,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		return Ok(());
 	}
 
-	tracing_subscriber::fmt().with_env_filter(EnvFilter::try_new(&config.logging.filter)?).init();
+	init_logging(&config.logging)?;
 	if let Some(destination) = args.backup_feeds {
 		Shortlinks::open(&config.shortlinks).await?.backup(destination).await?;
+		info!(event = "feeds.backup_complete", "feed backup completed");
 		return Ok(());
 	}
+	info!(
+		event = "service.starting",
+		version = env!("CARGO_PKG_VERSION"),
+		web = config.server.web,
+		api = config.server.api,
+		custom_feeds = config.server.custom_feeds,
+		allow_nsfw = config.server.allow_nsfw,
+		video_providers = config.video.providers.len(),
+		"starting neddit"
+	);
+	let listener = server::bind(&config.server.listen).await?;
+	let address = listener.local_addr()?;
 
 	let domains = config.domain_policy()?;
 	let signer = if let Some(path) = &config.media.signing_key_file {
 		MediaSigner::from_file(path)?
 	} else {
-		warn!("no media key file configured; signed media URLs will expire when this process stops");
+		warn!(
+			event = "media.ephemeral_signing_key",
+			"no media key file configured; signed media URLs will expire after restart"
+		);
 		MediaSigner::random()?
 	}
 	.with_domains(domains.clone())
 	.with_content_policy(config.server.allow_nsfw);
-	info!("creating Reddit client");
 	let cache = Cache::open(&config.cache).await?;
 	let shortlinks = if config.server.custom_feeds && config.shortlinks.enabled {
 		Some(Shortlinks::open(&config.shortlinks).await?)
@@ -74,9 +89,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		config.server.custom_feeds,
 	);
 
-	info!(address = %config.server.listen, version = env!("CARGO_PKG_VERSION"), "neddit listening");
-	let result = server::listen(app, &config.server.listen).await;
+	info!(event = "service.ready", %address, version = env!("CARGO_PKG_VERSION"), "neddit is ready");
+	let result = server::serve(app, listener).await;
+	if let Err(error) = &result {
+		error!(event = "service.failed", %error, "HTTP server failed");
+	}
 	reddit.shutdown().await;
+	if result.is_ok() {
+		info!(event = "service.stopped", "neddit stopped");
+	}
 	result?;
+	Ok(())
+}
+
+fn init_logging(config: &LoggingConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+	let filter = match env::var("RUST_LOG") {
+		Ok(filter) => EnvFilter::try_new(filter)?,
+		Err(env::VarError::NotPresent) => EnvFilter::try_new(&config.filter)?,
+		Err(error) => return Err(Box::new(error)),
+	};
+	match config.format {
+		LogFormat::Compact => tracing_subscriber::fmt()
+			.with_env_filter(filter)
+			.with_writer(std::io::stderr)
+			.with_ansi(std::io::stderr().is_terminal() && env::var_os("NO_COLOR").is_none())
+			.compact()
+			.try_init()?,
+		LogFormat::Json => tracing_subscriber::fmt()
+			.with_env_filter(filter)
+			.with_writer(std::io::stderr)
+			.with_ansi(false)
+			.json()
+			.try_init()?,
+	}
 	Ok(())
 }

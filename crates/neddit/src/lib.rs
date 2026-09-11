@@ -28,5 +28,5 @@ pub fn router(
 	if web_enabled {
 		app = app.layer(middleware::from_fn(neddit_web::html_error_pages));
 	}
-	app
+	server::with_request_logging(app)
 }

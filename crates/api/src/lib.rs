@@ -22,4 +22,5 @@ pub mod parsing;
 pub mod search;
 pub mod server;
 pub mod service;
+pub mod storage;
 pub mod video;

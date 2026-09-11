@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use neddit_api::media::{DomainPolicy, MediaUrlError};
+use neddit_api::storage::{CacheConfig, ShortlinkConfig};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -20,6 +21,8 @@ pub struct Config {
 	pub media: MediaConfig,
 	pub video: VideoConfig,
 	pub logging: LoggingConfig,
+	pub cache: CacheConfig,
+	pub shortlinks: ShortlinkConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -87,6 +90,18 @@ impl Config {
 	}
 
 	fn validate(&self) -> Result<(), ConfigError> {
+		self.shortlinks.validate().map_err(ConfigError::Storage)?;
+		if self.cache.max_bytes < 4 * 1024 * 1024 || self.cache.max_bytes > 1024 * 1024 * 1024 * 1024 {
+			return Err(ConfigError::Storage("cache.max_bytes must be between 4 MiB and 1 TiB"));
+		}
+		if self.cache.path.as_os_str().is_empty() || self.shortlinks.path.as_os_str().is_empty() || self.cache.path == self.shortlinks.path {
+			return Err(ConfigError::Storage("cache.path and shortlinks.path must be nonempty and distinct"));
+		}
+		for path in [&self.cache.path, &self.shortlinks.path] {
+			if path.to_string_lossy() == ":memory:" || path.to_string_lossy().starts_with("file:") {
+				return Err(ConfigError::Storage("storage paths must name local files, not SQLite memory databases or URIs"));
+			}
+		}
 		if !self.web.enabled && !self.api.enabled {
 			return Err(ConfigError::NoSurface);
 		}
@@ -134,6 +149,8 @@ impl Default for Config {
 				executable: "yt-dlp".into(),
 			},
 			logging: LoggingConfig { filter: "info".into() },
+			cache: CacheConfig::default(),
+			shortlinks: ShortlinkConfig::default(),
 		}
 	}
 }
@@ -163,6 +180,8 @@ fn merge(base: &mut toml::Value, overrides: toml::Value) {
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
+	#[error("{0}")]
+	Storage(&'static str),
 	#[error("failed to construct built-in configuration defaults")]
 	Defaults(#[source] toml::ser::Error),
 	#[error("failed to read configuration file `{}`", path.display())]

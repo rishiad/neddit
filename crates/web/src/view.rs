@@ -77,6 +77,7 @@ pub struct FeedTemplate {
 pub struct CustomFeedTemplate {
 	pub mode: FeedPageMode,
 	pub share_url: String,
+	pub create_action: Option<&'static str>,
 	pub query: String,
 	pub rank: String,
 	pub include_nsfw: bool,

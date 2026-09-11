@@ -9,7 +9,10 @@
 let
   cfg = config.services.neddit;
   format = pkgs.formats.toml { };
-  settings = lib.recursiveUpdate cfg.settings (lib.optionalAttrs (cfg.mediaKeyFile != null) {
+  settings = lib.recursiveUpdate (lib.recursiveUpdate {
+    cache.path = "/var/cache/neddit/cache.sqlite";
+    shortlinks.path = "/var/lib/neddit/feeds.sqlite";
+  } cfg.settings) (lib.optionalAttrs (cfg.mediaKeyFile != null) {
     media.signing_key_file = "/run/credentials/neddit.service/media-key";
   });
   configFile = format.generate "neddit.toml" settings;
@@ -52,6 +55,8 @@ in
         RestartSec = 5;
 
         DynamicUser = true;
+        StateDirectory = "neddit";
+        CacheDirectory = "neddit";
         AmbientCapabilities = "";
         CapabilityBoundingSet = "";
         LockPersonality = true;

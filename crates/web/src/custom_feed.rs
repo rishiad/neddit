@@ -2,16 +2,17 @@ use crate::view::{custom_feed_item, pagination, CustomFeedTemplate, FeedPageMode
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::{
-	extract::{Query, State},
-	http::{uri::Authority, HeaderMap},
+	extract::{Path, Query, State},
+	http::{HeaderMap, StatusCode},
+	response::{IntoResponse, Redirect, Response},
+	Form,
 };
 use neddit_api::{
-	feed::{expand_rank_preset, FeedPage, Request},
+	feed::{expand_rank_preset, Continuation, FeedPage, Request},
 	media::MediaSigner,
 	server::MediaProxy,
 	service::{ListingTime, RedditService},
 };
-use url::form_urlencoded;
 
 #[derive(Template, WebTemplate)]
 #[template(path = "feed_pool.html")]
@@ -28,54 +29,65 @@ pub async fn controls(Query(request): Query<Request>) -> FeedControls {
 	}
 }
 
-pub async fn builder(
-	headers: HeaderMap,
+pub async fn builder(State(service): State<RedditService>, State(signer): State<MediaSigner>, State(media): State<MediaProxy>, Query(request): Query<Request>) -> Response {
+	render(service, signer, media, request, "/feeds").await
+}
+
+pub async fn page(State(service): State<RedditService>, State(signer): State<MediaSigner>, State(media): State<MediaProxy>, Query(request): Query<Request>) -> Response {
+	render(service, signer, media, request, "/feed").await
+}
+
+pub async fn create(State(service): State<RedditService>, headers: HeaderMap, Form(request): Form<Request>) -> Response {
+	if headers.get("sec-fetch-site").is_some_and(|site| site == "cross-site") {
+		return (StatusCode::FORBIDDEN, "Cross-site feed creation is not allowed").into_response();
+	}
+	match service.save_feed(&request).await {
+		Ok(feed) => Redirect::to(&format!("/f/{}", feed.id)).into_response(),
+		Err(error) => (neddit_api::feed::status(&error), error.to_string()).into_response(),
+	}
+}
+
+pub async fn saved(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
-	Query(request): Query<Request>,
-) -> CustomFeedTemplate {
-	let authority = request_authority(&headers);
-	render(service, signer, media, request, true, authority.as_ref()).await
+	Path(id): Path<String>,
+	Query(continuation): Query<Continuation>,
+) -> Response {
+	match service.saved_feed(&id, continuation).await {
+		Ok(request) => render(service, signer, media, request, &format!("/f/{id}")).await,
+		Err(error) => (neddit_api::feed::status(&error), error.to_string()).into_response(),
+	}
 }
 
-pub async fn page(
-	State(service): State<RedditService>,
-	State(signer): State<MediaSigner>,
-	State(media): State<MediaProxy>,
-	Query(request): Query<Request>,
-) -> CustomFeedTemplate {
-	render(service, signer, media, request, false, None).await
-}
-
-async fn render(service: RedditService, signer: MediaSigner, media: MediaProxy, request: Request, show_builder: bool, authority: Option<&Authority>) -> CustomFeedTemplate {
+async fn render(service: RedditService, signer: MediaSigner, media: MediaProxy, request: Request, base: &str) -> Response {
+	let show_builder = base == "/feeds";
 	let mut view = form(&request, service.allows_nsfw(), show_builder);
+	view.create_action = service.shortlinks_enabled().then_some("/feeds");
+	view.share_url = if let Some(id) = base.strip_prefix("/f/") {
+		service.feed_url(id).unwrap_or_else(|| base.into())
+	} else if !request.q.trim().is_empty() {
+		request.url("/feed", None)
+	} else {
+		String::new()
+	};
 	if request.q.trim().is_empty() {
 		if !show_builder {
 			view.diagnostic = "A shared feed URL requires a q parameter".into();
 		}
-		return view;
+		return (if show_builder { StatusCode::OK } else { StatusCode::BAD_REQUEST }, view).into_response();
 	}
-	match service.custom_feed(&request).await {
+	let status = match service.custom_feed(&request).await {
 		Ok(page) => {
-			let base = if show_builder { "/feeds" } else { "/feed" };
 			publish(&request, page, &signer, media.video_enabled(), base, &mut view);
-			view.share_url = qualify_share_url(share_url(&request), authority);
+			StatusCode::OK
 		}
-		Err(error) => view.diagnostic = error.to_string(),
-	}
-	view
-}
-
-fn request_authority(headers: &HeaderMap) -> Option<Authority> {
-	headers.get("host")?.to_str().ok()?.parse().ok()
-}
-
-fn qualify_share_url(path: String, authority: Option<&Authority>) -> String {
-	match authority {
-		Some(authority) => format!("{authority}{path}"),
-		None => path,
-	}
+		Err(error) => {
+			view.diagnostic = error.to_string();
+			neddit_api::feed::status(&error)
+		}
+	};
+	(status, view).into_response()
 }
 
 fn publish(request: &Request, page: FeedPage, signer: &MediaSigner, video_enabled: bool, base: &str, view: &mut CustomFeedTemplate) {
@@ -87,50 +99,10 @@ fn publish(request: &Request, page: FeedPage, signer: &MediaSigner, video_enable
 	view.result_count = view.items.len();
 	view.searched = true;
 	view.coverage = page.coverage;
-	let previous = page.previous_page.map(|number| feed_page_url(request, number, page.frozen, base)).unwrap_or_default();
-	let next = page.next_page.map(|number| feed_page_url(request, number, page.frozen, base)).unwrap_or_default();
+	let link = |number| page.cursor.as_deref().map(|cursor| request.url(base, Some((number, cursor)))).unwrap_or_default();
+	let previous = page.previous_page.map(link).unwrap_or_default();
+	let next = page.next_page.map(link).unwrap_or_default();
 	view.pagination = pagination(page.number, previous, next);
-}
-
-fn feed_page_url(request: &Request, page: u32, frozen: i64, base: &str) -> String {
-	let mut query = form_urlencoded::Serializer::new(String::new());
-	query.append_pair("q", &request.q).append_pair("frozen", &frozen.to_string());
-	if request.pool() != "new" {
-		query.append_pair("pool", request.pool());
-	}
-	if request.pool() == "top" {
-		query.append_pair("t", request.time().as_str());
-	}
-	query.append_pair("rank", expand_rank_preset(request.rank()));
-	if request.limit() != 25 {
-		query.append_pair("limit", &request.limit().to_string());
-	}
-	if request.include_nsfw {
-		query.append_pair("include_nsfw", "true");
-	}
-	if page > 1 {
-		query.append_pair("page", &page.to_string());
-	}
-	format!("{base}?{}", query.finish())
-}
-
-fn share_url(request: &Request) -> String {
-	let mut query = form_urlencoded::Serializer::new(String::new());
-	query.append_pair("q", request.q.trim());
-	if request.pool() != "new" {
-		query.append_pair("pool", request.pool());
-	}
-	if request.pool() == "top" {
-		query.append_pair("t", request.time().as_str());
-	}
-	query.append_pair("rank", expand_rank_preset(request.rank()));
-	if request.limit() != 25 {
-		query.append_pair("limit", &request.limit().to_string());
-	}
-	if request.include_nsfw {
-		query.append_pair("include_nsfw", "true");
-	}
-	format!("/feed?{}", query.finish())
 }
 
 fn choices(values: &[(&'static str, &'static str)], active: &str) -> Vec<SelectChoice> {
@@ -169,6 +141,7 @@ fn form(request: &Request, nsfw_available: bool, show_builder: bool) -> CustomFe
 	CustomFeedTemplate {
 		mode: if show_builder { FeedPageMode::Builder } else { FeedPageMode::Shared },
 		share_url: String::new(),
+		create_action: None,
 		query: request.q.clone(),
 		rank: expand_rank_preset(request.rank()).into(),
 		include_nsfw: request.include_nsfw,

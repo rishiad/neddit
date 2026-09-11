@@ -62,8 +62,12 @@ pub fn router(service: RedditService, media: MediaProxy) -> Router {
 	};
 	let mut app = Router::new()
 		.route("/", get(app::front_page))
-		.route("/feeds", get(custom_feed::builder))
+		.route(
+			"/feeds",
+			get(custom_feed::builder).post(custom_feed::create).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
+		)
 		.route("/feed", get(custom_feed::page))
+		.route("/f/{id}", get(custom_feed::saved))
 		.route("/search", get(search::page))
 		.route("/more-comments", get(app::more_comments))
 		.route("/gallery/{article}/{index}", get(app::gallery))

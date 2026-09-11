@@ -1,6 +1,6 @@
 use crate::client::{error::ClientError, RedditClient};
 use crate::media::{MediaSigner, MediaUrlError};
-use crate::video::{decode_video_target, rewrite_hls as rewrite_video_hls, validate_video_target, VideoError, VideoPlayback, VideoResolver};
+use crate::video::{decode_video_target, rewrite_hls as rewrite_video_hls, VideoError, VideoPlayback, VideoResolver, VideoSupport};
 use axum::{
 	body::{to_bytes, Body},
 	extract::{Path, Query, State},
@@ -41,8 +41,8 @@ impl MediaProxy {
 		&self.signer
 	}
 
-	pub const fn video_enabled(&self) -> bool {
-		self.video.is_some()
+	pub fn video_support(&self) -> VideoSupport {
+		self.video.as_ref().map_or_else(VideoSupport::default, VideoResolver::support)
 	}
 
 	pub async fn resolve_video(&self, url: &str) -> Result<VideoPlayback, VideoError> {
@@ -128,8 +128,10 @@ async fn proxy_media(State(media): State<MediaProxy>, Path((signature, encoded))
 }
 
 async fn proxy_video(State(media): State<MediaProxy>, Path((signature, encoded)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ProxyError> {
-	let mut target = decode_video_target(&media.signer, &signature, &encoded)?;
-	let user_agent = media.video.as_ref().ok_or(VideoError::Disabled)?.user_agent_for(&target).await;
+	let video = media.video.as_ref().ok_or(VideoError::Disabled)?;
+	let support = video.support();
+	let mut target = decode_video_target(&media.signer, support, &signature, &encoded)?;
+	let user_agent = video.user_agent_for(&target).await;
 	let etag = format!("\"{signature}\"");
 	if request_has_etag(&headers, &etag) {
 		return not_modified(&etag, VIDEO_CACHE_CONTROL);
@@ -138,7 +140,7 @@ async fn proxy_video(State(media): State<MediaProxy>, Path((signature, encoded))
 	for redirect in 0..=MAX_MEDIA_REDIRECTS {
 		let response = media.client.proxy_external(target.to_string(), &headers, user_agent.as_deref()).await?;
 		if response.status() == StatusCode::NOT_MODIFIED || !response.status().is_redirection() {
-			return finish_video_response(response, &target, &media.signer, &etag).await;
+			return finish_video_response(response, &target, &media.signer, support, &etag).await;
 		}
 		if redirect == MAX_MEDIA_REDIRECTS {
 			return Err(ProxyError::TooManyRedirects);
@@ -150,7 +152,7 @@ async fn proxy_video(State(media): State<MediaProxy>, Path((signature, encoded))
 			.to_str()
 			.map_err(|_| ProxyError::InvalidRedirect)?;
 		let redirected = target.join(location).map_err(|_| ProxyError::InvalidRedirect)?;
-		validate_video_target(&redirected).map_err(|_| ProxyError::ForbiddenRedirect)?;
+		support.validate_target(&redirected).map_err(|_| ProxyError::ForbiddenRedirect)?;
 		target = redirected;
 	}
 
@@ -173,9 +175,9 @@ async fn finish_media_response(mut response: Response, target: &Url, signer: &Me
 	Ok(response)
 }
 
-async fn finish_video_response(mut response: Response, target: &Url, signer: &MediaSigner, etag: &str) -> Result<Response, ProxyError> {
+async fn finish_video_response(mut response: Response, target: &Url, signer: &MediaSigner, support: VideoSupport, etag: &str) -> Result<Response, ProxyError> {
 	if response.status().is_success() && is_hls(&response, target) {
-		response = rewrite_manifest(response, |manifest| rewrite_video_hls(manifest, target, signer)).await?;
+		response = rewrite_manifest(response, |manifest| rewrite_video_hls(manifest, target, signer, support)).await?;
 	}
 
 	if response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED {

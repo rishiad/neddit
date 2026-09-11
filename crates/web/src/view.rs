@@ -10,7 +10,7 @@ use askama_web::WebTemplate;
 
 use neddit_api::media::MediaSigner;
 use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, PublicThing, Subreddit, User, WikiPage, WikiPageListing};
-use neddit_api::video::{VideoPlayback, VideoResolver};
+use neddit_api::video::{VideoPlayback, VideoSupport};
 use url::{form_urlencoded, Url};
 
 #[derive(Clone, Debug)]
@@ -360,14 +360,14 @@ pub fn subreddit_feed_item(post: &Post, signer: &MediaSigner, subreddit_is_nsfw:
 	item
 }
 
-pub fn feed_item_with_media(post: &Post, signer: &MediaSigner, video_enabled: bool) -> FeedItem {
+pub fn feed_item_with_media(post: &Post, signer: &MediaSigner, video_support: VideoSupport) -> FeedItem {
 	let mut item = feed_item(post, signer);
 	if let Some(rewritten) = post_media_url(post, signer).filter(|_| !post.spoiler) {
 		item.href = rewritten;
 		item.domain.clear();
 		item.show_domain = false;
 	}
-	if video_enabled && VideoResolver::supports(&post.url) {
+	if video_support.supports(&post.url) {
 		let mut query = form_urlencoded::Serializer::new(String::new());
 		query.append_pair("url", &post.url);
 		item.video = Some(VideoView {
@@ -381,8 +381,8 @@ pub fn feed_item_with_media(post: &Post, signer: &MediaSigner, video_enabled: bo
 	item
 }
 
-pub fn custom_feed_item(post: &Post, signer: &MediaSigner, video_enabled: bool, include_nsfw: bool) -> FeedItem {
-	let mut item = feed_item_with_media(post, signer, video_enabled);
+pub fn custom_feed_item(post: &Post, signer: &MediaSigner, video_support: VideoSupport, include_nsfw: bool) -> FeedItem {
+	let mut item = feed_item_with_media(post, signer, video_support);
 	item.flair = post_flair(post);
 	if include_nsfw {
 		item.badges.retain(|badge| *badge != "NSFW");
@@ -411,9 +411,9 @@ fn preview_url(post: &Post) -> Option<&str> {
 	best.or_else(|| post.extra.get("thumbnail")?.as_str().filter(|url| url.starts_with("https://") || url.starts_with("//")))
 }
 
-pub fn search_result(item: &PublicThing, signer: &MediaSigner, video_enabled: bool) -> Option<SearchResultView> {
+pub fn search_result(item: &PublicThing, signer: &MediaSigner, video_support: VideoSupport) -> Option<SearchResultView> {
 	match item {
-		PublicThing::Post(thing) => Some(post_result(&thing.data, signer, video_enabled)),
+		PublicThing::Post(thing) => Some(post_result(&thing.data, signer, video_support)),
 		PublicThing::Subreddit(thing) => {
 			let subreddit = &thing.data;
 			Some(SearchResultView {
@@ -456,8 +456,8 @@ pub fn search_result(item: &PublicThing, signer: &MediaSigner, video_enabled: bo
 	}
 }
 
-pub fn post_result(post: &Post, signer: &MediaSigner, video_enabled: bool) -> SearchResultView {
-	let item = feed_item_with_media(post, signer, video_enabled);
+pub fn post_result(post: &Post, signer: &MediaSigner, video_support: VideoSupport) -> SearchResultView {
+	let item = feed_item_with_media(post, signer, video_support);
 	SearchResultView {
 		fullname: post.name.clone(),
 		metric: item.score,
@@ -653,8 +653,8 @@ fn nonempty(value: &str) -> Option<String> {
 	(!value.is_empty()).then(|| value.to_owned())
 }
 
-pub fn post_view(post: &Post, signer: &MediaSigner, video_enabled: bool) -> PostView {
-	let mut item = feed_item_with_media(post, signer, video_enabled);
+pub fn post_view(post: &Post, signer: &MediaSigner, video_support: VideoSupport) -> PostView {
+	let mut item = feed_item_with_media(post, signer, video_support);
 	item.flair = post_flair(post);
 	let gallery = gallery_view(post, signer, 0);
 	let image_url = if gallery.is_none() && item.video.is_none() && is_image_post(post) {

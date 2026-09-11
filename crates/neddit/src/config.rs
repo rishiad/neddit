@@ -1,4 +1,5 @@
 use std::{
+	collections::HashSet,
 	fs,
 	net::SocketAddr,
 	path::{Path, PathBuf},
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use neddit_api::media::{DomainPolicy, MediaUrlError};
+use neddit_api::video::VideoProvider;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -58,7 +60,7 @@ pub struct MediaConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct VideoConfig {
-	pub enabled: bool,
+	pub providers: Vec<VideoProvider>,
 	pub executable: PathBuf,
 }
 
@@ -98,7 +100,10 @@ impl Config {
 		if self.video.executable.as_os_str().is_empty() {
 			return Err(ConfigError::EmptyVideoExecutable);
 		}
-		if !self.content.allow_nsfw && self.video.enabled {
+		if let Some(provider) = duplicate(&self.video.providers) {
+			return Err(ConfigError::DuplicateVideoProvider(provider));
+		}
+		if !self.content.allow_nsfw && !self.video.providers.is_empty() {
 			return Err(ConfigError::NsfwVideo);
 		}
 		self.domain_policy()?;
@@ -130,12 +135,17 @@ impl Default for Config {
 			},
 			media: MediaConfig { signing_key_file: None },
 			video: VideoConfig {
-				enabled: true,
+				providers: Vec::new(),
 				executable: "yt-dlp".into(),
 			},
 			logging: LoggingConfig { filter: "info".into() },
 		}
 	}
+}
+
+fn duplicate<T: Copy + Eq + std::hash::Hash>(values: &[T]) -> Option<T> {
+	let mut seen = HashSet::new();
+	values.iter().copied().find(|value| !seen.insert(*value))
 }
 
 fn defaults_document() -> Result<toml::Value, ConfigError> {
@@ -188,7 +198,9 @@ pub enum ConfigError {
 	InvalidListenAddress(String),
 	#[error("video.executable cannot be empty")]
 	EmptyVideoExecutable,
-	#[error("video.enabled must be false when content.allow_nsfw is false")]
+	#[error("video provider `{0:?}` is configured more than once")]
+	DuplicateVideoProvider(VideoProvider),
+	#[error("video.providers must be empty when content.allow_nsfw is false")]
 	NsfwVideo,
 	#[error("logging.filter is invalid")]
 	LogFilter {

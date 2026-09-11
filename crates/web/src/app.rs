@@ -11,6 +11,7 @@ use neddit_api::{
 		CommentQuery, CommentSort, ListingQuery, ListingTime, MoreChildrenQuery, PostSort, RedditService, ServiceError, ThreadCommentSearchQuery, UserHistoryQuery,
 		UserHistorySort, WikiPageQuery,
 	},
+	video::VideoSupport,
 };
 use serde::Deserialize;
 
@@ -203,7 +204,7 @@ async fn user_page(
 		..UserHistoryQuery::default()
 	};
 	let (activity, user) = tokio::try_join!(
-		user_activity(&service, &signer, media.video_enabled(), &username, &history_query, section),
+		user_activity(&service, &signer, media.video_support(), &username, &history_query, section),
 		service.user_about(&username, Access::Standard),
 	)?;
 	let posts_url = format!("/user/{username}");
@@ -229,7 +230,7 @@ async fn user_page(
 async fn user_activity(
 	service: &RedditService,
 	signer: &MediaSigner,
-	video_enabled: bool,
+	video_support: VideoSupport,
 	username: &str,
 	query: &UserHistoryQuery,
 	section: UserSection,
@@ -238,7 +239,7 @@ async fn user_activity(
 		UserSection::Posts => {
 			let listing = service.user_submitted(username, query, Access::Standard).await?;
 			let before = listing.data.before.clone().or_else(|| listing.data.children.first().map(|thing| thing.data.name.clone()));
-			let results = listing.data.children.iter().map(|thing| post_result(&thing.data, signer, video_enabled)).collect();
+			let results = listing.data.children.iter().map(|thing| post_result(&thing.data, signer, video_support)).collect();
 			Ok(UserActivityPage {
 				before,
 				after: listing.data.after,
@@ -252,7 +253,7 @@ async fn user_activity(
 				.before
 				.clone()
 				.or_else(|| listing.data.children.first().map(public_fullname).map(str::to_owned));
-			let results = listing.data.children.iter().filter_map(|item| search_result(item, signer, video_enabled)).collect();
+			let results = listing.data.children.iter().filter_map(|item| search_result(item, signer, video_support)).collect();
 			Ok(UserActivityPage {
 				before,
 				after: listing.data.after,
@@ -335,7 +336,7 @@ pub async fn post_comments(
 	Path(article): Path<String>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), None, article, None, query).await
+	post_page(service, signer, media.video_support(), None, article, None, query).await
 }
 
 pub async fn subreddit_post_comments(
@@ -345,7 +346,7 @@ pub async fn subreddit_post_comments(
 	Path((subreddit, article)): Path<(String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), Some(subreddit), article, None, query).await
+	post_page(service, signer, media.video_support(), Some(subreddit), article, None, query).await
 }
 
 pub async fn post_permalink(
@@ -355,7 +356,7 @@ pub async fn post_permalink(
 	Path((article, _slug)): Path<(String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), None, article, None, query).await
+	post_page(service, signer, media.video_support(), None, article, None, query).await
 }
 
 pub async fn post_comment_permalink(
@@ -365,7 +366,7 @@ pub async fn post_comment_permalink(
 	Path((article, _slug, comment)): Path<(String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), None, article, Some(comment), query).await
+	post_page(service, signer, media.video_support(), None, article, Some(comment), query).await
 }
 
 pub async fn subreddit_post_permalink(
@@ -375,7 +376,7 @@ pub async fn subreddit_post_permalink(
 	Path((subreddit, article, _slug)): Path<(String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), Some(subreddit), article, None, query).await
+	post_page(service, signer, media.video_support(), Some(subreddit), article, None, query).await
 }
 
 pub async fn subreddit_post_comment_permalink(
@@ -385,7 +386,7 @@ pub async fn subreddit_post_comment_permalink(
 	Path((subreddit, article, _slug, comment)): Path<(String, String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
-	post_page(service, signer, media.video_enabled(), Some(subreddit), article, Some(comment), query).await
+	post_page(service, signer, media.video_support(), Some(subreddit), article, Some(comment), query).await
 }
 
 pub async fn more_comments(State(service): State<RedditService>, Query(query): Query<MoreCommentsQuery>) -> Result<MoreCommentsTemplate, AppError> {
@@ -454,7 +455,7 @@ pub async fn post_content(
 		.next()
 		.ok_or(AppError::PostNotFound)?
 		.data;
-	let mut post = post_view(&post, &signer, media.video_enabled());
+	let mut post = post_view(&post, &signer, media.video_support());
 	post.hide_content = false;
 	Ok(PostContentTemplate { post })
 }
@@ -462,7 +463,7 @@ pub async fn post_content(
 async fn post_page(
 	service: RedditService,
 	signer: MediaSigner,
-	video_enabled: bool,
+	video_support: VideoSupport,
 	subreddit: Option<String>,
 	article: String,
 	comment: Option<String>,
@@ -504,7 +505,7 @@ async fn post_page(
 		(post, tree, 0)
 	};
 	let comment_count = post.num_comments;
-	let post = post_view(&post, &signer, video_enabled);
+	let post = post_view(&post, &signer, video_support);
 	let search_query = search.as_deref().unwrap_or_default();
 
 	Ok(PostTemplate {

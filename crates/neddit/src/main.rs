@@ -10,7 +10,7 @@ use neddit_api::{
 	server,
 	server::MediaProxy,
 	service::{ContentPolicy, RedditService},
-	video::VideoResolver,
+	video::{VideoResolver, VideoSupport},
 };
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -48,7 +48,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	info!("creating Reddit client");
 	let reddit = RedditClient::with_domains(domains).await?;
 	let service = RedditService::with_content_policy(reddit.clone(), ContentPolicy::new(config.content.allow_nsfw));
-	let video = config.video.enabled.then(|| VideoResolver::new(&config.video.executable));
+	let video_support = VideoSupport::new(&config.video.providers);
+	let video = VideoResolver::new(&config.video.executable, video_support);
 	let media = MediaProxy::new(reddit.clone(), signer, video);
 	let app = neddit::router(service, &media, config.web.enabled, config.api.enabled);
 

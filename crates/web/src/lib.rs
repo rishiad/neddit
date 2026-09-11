@@ -54,7 +54,7 @@ impl FromRef<WebState> for MediaProxy {
 }
 
 pub fn router(service: RedditService, media: MediaProxy) -> Router {
-	let video_enabled = media.video_enabled();
+	let video_enabled = !media.video_support().is_empty();
 	let state = WebState {
 		service,
 		signer: media.signer().clone(),

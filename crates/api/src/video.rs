@@ -40,6 +40,7 @@ const OUTPUT_TEMPLATE: &str = concat!(
 #[derive(Clone)]
 pub struct VideoResolver {
 	executable: Arc<PathBuf>,
+	support: VideoSupport,
 	cache: Arc<Mutex<HashMap<String, CachedVideo>>>,
 	permits: Arc<Semaphore>,
 }
@@ -104,8 +105,9 @@ pub struct VideoSource {
 	pub fps: Option<f64>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Provider {
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Hash, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum VideoProvider {
 	Youtube,
 	Redgifs,
 	Streamable,
@@ -113,7 +115,7 @@ enum Provider {
 	Twitch,
 }
 
-impl Provider {
+impl VideoProvider {
 	fn from_url(url: &Url) -> Result<Self, VideoError> {
 		let host = url.host_str().ok_or(VideoError::InvalidUrl)?.to_ascii_lowercase();
 		if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
@@ -142,6 +144,56 @@ impl Provider {
 			Self::Vimeo => "vimeo",
 			Self::Twitch => "twitch",
 		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VideoSupport(u8);
+
+impl VideoSupport {
+	pub const ALL: Self = Self((1 << 5) - 1);
+
+	pub fn new(providers: &[VideoProvider]) -> Self {
+		let mut bits = 0;
+		for provider in providers {
+			bits |= 1 << (*provider as u8);
+		}
+		Self(bits)
+	}
+
+	pub const fn is_empty(self) -> bool {
+		self.0 == 0
+	}
+
+	pub fn supports(self, input: &str) -> bool {
+		Url::parse(input)
+			.ok()
+			.and_then(|url| VideoProvider::from_url(&url).ok())
+			.is_some_and(|provider| self.contains(provider))
+	}
+
+	fn contains(self, provider: VideoProvider) -> bool {
+		self.0 & (1 << (provider as u8)) != 0
+	}
+
+	pub(crate) fn validate_target(self, target: &Url) -> Result<(), VideoError> {
+		let host = target.host_str().ok_or(VideoError::InvalidTarget)?.to_ascii_lowercase();
+		if target.scheme() != "https" || !target.username().is_empty() || target.password().is_some() || target.port().is_some() {
+			return Err(VideoError::ForbiddenTarget);
+		}
+		let allowed = [
+			(VideoProvider::Youtube, &["googlevideo.com", "ytimg.com"][..]),
+			(VideoProvider::Redgifs, &["redgifs.com"][..]),
+			(VideoProvider::Streamable, &["streamable.com"][..]),
+			(VideoProvider::Vimeo, &["vimeocdn.com", "vimeo.com", "akamaized.net"][..]),
+			(VideoProvider::Twitch, &["twitchcdn.net", "ttvnw.net", "cloudfront.net", "akamaized.net"][..]),
+		]
+		.into_iter()
+		.any(|(provider, domains)| self.contains(provider) && domains.iter().any(|domain| host_is(&host, domain)));
+		if !allowed {
+			return Err(VideoError::ForbiddenTarget);
+		}
+		Ok(())
 	}
 }
 
@@ -200,25 +252,29 @@ fn numeric_id(value: &str) -> bool {
 }
 
 impl VideoResolver {
-	pub fn new(executable: impl AsRef<Path>) -> Self {
-		Self {
+	pub fn new(executable: impl AsRef<Path>, support: VideoSupport) -> Option<Self> {
+		(!support.is_empty()).then(|| Self {
 			executable: Arc::new(executable.as_ref().to_owned()),
+			support,
 			cache: Arc::new(Mutex::new(HashMap::new())),
 			permits: Arc::new(Semaphore::new(MAX_EXTRACTORS)),
-		}
+		})
 	}
 
-	pub fn supports(input: &str) -> bool {
-		Url::parse(input).is_ok_and(|url| Provider::from_url(&url).is_ok())
+	pub const fn support(&self) -> VideoSupport {
+		self.support
 	}
 
 	pub async fn resolve(&self, input: &str, signer: &MediaSigner) -> Result<VideoPlayback, VideoError> {
 		let url = Url::parse(input).map_err(|_| VideoError::InvalidUrl)?;
-		let provider = Provider::from_url(&url)?;
+		let provider = VideoProvider::from_url(&url)?;
+		if !self.support.contains(provider) {
+			return Err(VideoError::UnsupportedProvider);
+		}
 		let cache_key = url.to_string();
 
 		if let Some(video) = self.cached(&cache_key).await {
-			return playback(video, provider, signer);
+			return playback(video, provider, signer, self.support);
 		}
 
 		let _permit = timeout(EXTRACT_QUEUE_TIMEOUT, self.permits.acquire())
@@ -227,7 +283,7 @@ impl VideoResolver {
 			.map_err(|_| VideoError::Busy)?;
 
 		if let Some(video) = self.cached(&cache_key).await {
-			return playback(video, provider, signer);
+			return playback(video, provider, signer, self.support);
 		}
 
 		let video = self.extract(url.as_str()).await?;
@@ -238,7 +294,7 @@ impl VideoResolver {
 				video: video.clone(),
 			},
 		);
-		playback(video, provider, signer)
+		playback(video, provider, signer, self.support)
 	}
 
 	async fn cached(&self, key: &str) -> Option<ExtractedVideo> {
@@ -347,8 +403,8 @@ async fn read_limited(reader: impl AsyncRead + Unpin, limit: usize) -> io::Resul
 	Ok(output)
 }
 
-fn playback(video: ExtractedVideo, provider: Provider, signer: &MediaSigner) -> Result<VideoPlayback, VideoError> {
-	let mut formats: Vec<(u32, VideoSource)> = video.formats.into_iter().filter_map(|format| source(format, signer)).collect();
+fn playback(video: ExtractedVideo, provider: VideoProvider, signer: &MediaSigner, support: VideoSupport) -> Result<VideoPlayback, VideoError> {
+	let mut formats: Vec<(u32, VideoSource)> = video.formats.into_iter().filter_map(|format| source(format, signer, support)).collect();
 	formats.sort_by_key(|format| std::cmp::Reverse(format.0));
 	formats.dedup_by(|left, right| left.1.mime == right.1.mime && left.1.width == right.1.width && left.1.height == right.1.height);
 	formats.truncate(12);
@@ -358,7 +414,7 @@ fn playback(video: ExtractedVideo, provider: Provider, signer: &MediaSigner) -> 
 	}
 
 	let poster = video.thumbnail.and_then(|value| Url::parse(&value).ok()).and_then(|url| {
-		validate_video_target(&url).ok()?;
+		support.validate_target(&url).ok()?;
 		Some(signer.scoped_url(VIDEO_ROUTE, VIDEO_SCOPE, &url))
 	});
 
@@ -372,12 +428,12 @@ fn playback(video: ExtractedVideo, provider: Provider, signer: &MediaSigner) -> 
 	})
 }
 
-fn source(format: ExtractedFormat, signer: &MediaSigner) -> Option<(u32, VideoSource)> {
+fn source(format: ExtractedFormat, signer: &MediaSigner, support: VideoSupport) -> Option<(u32, VideoSource)> {
 	if format.vcodec.as_deref() == Some("none") || format.acodec.as_deref() == Some("none") {
 		return None;
 	}
 	let upstream = Url::parse(format.url.as_deref()?).ok()?;
-	validate_video_target(&upstream).ok()?;
+	support.validate_target(&upstream).ok()?;
 	let hls = format.protocol.as_deref().is_some_and(|value| value.contains("m3u8")) || upstream.path().ends_with(".m3u8");
 	let mime = if hls {
 		"application/vnd.apple.mpegurl"
@@ -411,45 +467,20 @@ fn finite_u32(value: Option<f64>) -> Option<u32> {
 	(value.is_finite() && value > 0.0 && value <= f64::from(u32::MAX)).then(|| value.round() as u32)
 }
 
-pub fn decode_video_target(signer: &MediaSigner, signature: &str, encoded: &str) -> Result<Url, VideoError> {
+pub fn decode_video_target(signer: &MediaSigner, support: VideoSupport, signature: &str, encoded: &str) -> Result<Url, VideoError> {
 	let target = signer.decode_scoped_target(VIDEO_SCOPE, signature, encoded)?;
-	validate_video_target(&target)?;
+	support.validate_target(&target)?;
 	Ok(target)
 }
 
-pub fn rewrite_hls(manifest: &str, source: &Url, signer: &MediaSigner) -> Result<String, VideoError> {
-	signer.rewrite_hls_with(manifest, |reference| rewrite_reference(reference, source, signer))
+pub fn rewrite_hls(manifest: &str, source: &Url, signer: &MediaSigner, support: VideoSupport) -> Result<String, VideoError> {
+	signer.rewrite_hls_with(manifest, |reference| rewrite_reference(reference, source, signer, support))
 }
 
-fn rewrite_reference(reference: &str, source: &Url, signer: &MediaSigner) -> Result<String, VideoError> {
+fn rewrite_reference(reference: &str, source: &Url, signer: &MediaSigner, support: VideoSupport) -> Result<String, VideoError> {
 	let target = source.join(reference).map_err(|_| VideoError::InvalidManifestUrl)?;
-	validate_video_target(&target)?;
+	support.validate_target(&target)?;
 	Ok(signer.scoped_url(VIDEO_ROUTE, VIDEO_SCOPE, &target))
-}
-
-pub fn validate_video_target(target: &Url) -> Result<(), VideoError> {
-	let host = target.host_str().ok_or(VideoError::InvalidTarget)?.to_ascii_lowercase();
-	if target.scheme() != "https" || !target.username().is_empty() || target.password().is_some() || target.port().is_some() {
-		return Err(VideoError::ForbiddenTarget);
-	}
-	let allowed = [
-		"googlevideo.com",
-		"ytimg.com",
-		"redgifs.com",
-		"streamable.com",
-		"vimeocdn.com",
-		"vimeo.com",
-		"akamaized.net",
-		"twitchcdn.net",
-		"ttvnw.net",
-		"cloudfront.net",
-	]
-	.into_iter()
-	.any(|allowed| host_is(&host, allowed));
-	if !allowed {
-		return Err(VideoError::ForbiddenTarget);
-	}
-	Ok(())
 }
 
 fn host_is(host: &str, domain: &str) -> bool {

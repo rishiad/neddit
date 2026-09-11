@@ -10,6 +10,7 @@ use neddit_api::{
 	media::MediaSigner,
 	server::MediaProxy,
 	service::{ListingTime, RedditService},
+	video::VideoSupport,
 };
 use url::form_urlencoded;
 
@@ -59,7 +60,7 @@ async fn render(service: RedditService, signer: MediaSigner, media: MediaProxy, 
 	match service.custom_feed(&request).await {
 		Ok(page) => {
 			let base = if show_builder { "/feeds" } else { "/feed" };
-			publish(&request, page, &signer, media.video_enabled(), base, &mut view);
+			publish(&request, page, &signer, media.video_support(), base, &mut view);
 			view.share_url = qualify_share_url(share_url(&request), authority);
 		}
 		Err(error) => view.diagnostic = error.to_string(),
@@ -78,11 +79,11 @@ fn qualify_share_url(path: String, authority: Option<&Authority>) -> String {
 	}
 }
 
-fn publish(request: &Request, page: FeedPage, signer: &MediaSigner, video_enabled: bool, base: &str, view: &mut CustomFeedTemplate) {
+fn publish(request: &Request, page: FeedPage, signer: &MediaSigner, video_support: VideoSupport, base: &str, view: &mut CustomFeedTemplate) {
 	view.items = page
 		.items
 		.iter()
-		.map(|result| custom_feed_item(&result.post.data, signer, video_enabled, request.include_nsfw))
+		.map(|result| custom_feed_item(&result.post.data, signer, video_support, request.include_nsfw))
 		.collect();
 	view.result_count = view.items.len();
 	view.searched = true;

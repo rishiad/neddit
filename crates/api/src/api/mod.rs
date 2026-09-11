@@ -18,10 +18,7 @@ pub fn router(service: RedditService, custom_feeds_enabled: bool) -> Router {
 		let create = OpenApiRouter::new()
 			.routes(routes!(create_feed))
 			.route_layer(axum::extract::DefaultBodyLimit::max(16 * 1024));
-		documented = documented
-			.routes(routes!(custom_feed))
-			.routes(routes!(saved_feed))
-			.merge(create);
+		documented = documented.routes(routes!(custom_feed)).routes(routes!(saved_feed)).merge(create);
 	}
 	docs::finish(documented, service)
 }

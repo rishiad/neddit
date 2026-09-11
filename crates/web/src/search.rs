@@ -10,6 +10,8 @@ use neddit_api::{
 };
 use url::form_urlencoded;
 
+use crate::WebFeatures;
+
 #[derive(Template, WebTemplate)]
 #[template(path = "search_sorts.html")]
 pub struct SearchControls {
@@ -54,9 +56,15 @@ fn excerpt(source: &str, start: usize, end: usize) -> (String, String, String) {
 	}
 }
 
-pub async fn page(State(service): State<RedditService>, State(signer): State<MediaSigner>, State(media): State<MediaProxy>, Query(request): Query<Request>) -> SearchTemplate {
+pub async fn page(
+	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
+	State(media): State<MediaProxy>,
+	State(features): State<WebFeatures>,
+	Query(request): Query<Request>,
+) -> SearchTemplate {
 	let kind = request.kind.as_str();
-	let mut view = form(&request, service.allows_nsfw());
+	let mut view = form_with_features(&request, service.allows_nsfw(), features.custom_feeds_enabled);
 	if request.q.trim().is_empty() {
 		return view;
 	}
@@ -94,9 +102,10 @@ fn search_page_url(request: &Request, kind: &str, cursor: &str) -> String {
 	format!("/search?{}", params.finish())
 }
 
-fn form(request: &Request, nsfw_available: bool) -> SearchTemplate {
+fn form_with_features(request: &Request, nsfw_available: bool, custom_feeds_enabled: bool) -> SearchTemplate {
 	let (kinds, sorts, limits) = search_choices(request.kind.as_str(), request.sort(), request.limit());
 	SearchTemplate {
+		features: WebFeatures { custom_feeds_enabled },
 		query: request.q.clone(),
 		include_nsfw: request.include_nsfw,
 		nsfw_available,
@@ -114,4 +123,5 @@ fn form(request: &Request, nsfw_available: bool) -> SearchTemplate {
 		error_suffix: String::new(),
 	}
 }
+
 

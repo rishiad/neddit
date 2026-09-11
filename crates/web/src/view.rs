@@ -13,7 +13,7 @@ use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, Publ
 use neddit_api::video::{VideoPlayback, VideoSupport};
 use url::{form_urlencoded, Url};
 
-use crate::{markdown, ImageDisplay};
+use crate::{markdown, ImageDisplay, WebFeatures};
 
 #[derive(Clone, Debug)]
 pub struct FeedItem {
@@ -68,7 +68,7 @@ pub struct SortControls {
 #[derive(Template, WebTemplate)]
 #[template(path = "feed.html")]
 pub struct FeedTemplate {
-	pub custom_feeds_enabled: bool,
+	pub(crate) features: WebFeatures,
 	pub items: Vec<FeedItem>,
 	pub controls: SortControls,
 	pub pagination: Pagination,
@@ -78,7 +78,7 @@ pub struct FeedTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "custom_feed.html")]
 pub struct CustomFeedTemplate {
-	pub custom_feeds_enabled: bool,
+	pub(crate) features: WebFeatures,
 	pub mode: FeedPageMode,
 	pub share_url: String,
 	pub short_url: String,
@@ -141,7 +141,7 @@ pub struct SearchMetadata {
 #[derive(Template, WebTemplate)]
 #[template(path = "search.html")]
 pub struct SearchTemplate {
-	pub custom_feeds_enabled: bool,
+	pub(crate) features: WebFeatures,
 	pub query: String,
 	pub include_nsfw: bool,
 	pub nsfw_available: bool,
@@ -184,7 +184,7 @@ pub struct UserProfileView {
 #[derive(Template, WebTemplate)]
 #[template(path = "user.html")]
 pub struct UserTemplate {
-	pub custom_feeds_enabled: bool,
+	pub(crate) features: WebFeatures,
 	pub profile: UserProfileView,
 	pub results: Vec<SearchResultView>,
 	pub controls: SortControls,
@@ -198,7 +198,7 @@ pub struct UserTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "subreddit.html")]
 pub struct SubredditTemplate {
-	pub custom_feeds_enabled: bool,
+	pub(crate) features: WebFeatures,
 	pub community: CommunityView,
 	pub items: Vec<FeedItem>,
 	pub controls: SortControls,
@@ -226,7 +226,7 @@ pub struct WikiView {
 #[derive(Template, WebTemplate)]
 #[template(path = "wiki.html")]
 pub struct WikiTemplate {
-	pub custom_feeds_enabled: bool,
+	pub(crate) features: WebFeatures,
 	pub community: CommunityView,
 	pub wiki: WikiView,
 }
@@ -288,7 +288,7 @@ pub enum CommentTreeEvent {
 #[derive(Template, WebTemplate)]
 #[template(path = "post.html")]
 pub struct PostTemplate {
-	pub custom_feeds_enabled: bool,
+	pub(crate) features: WebFeatures,
 	pub post: PostView,
 	pub comment_tree: Vec<CommentTreeEvent>,
 	pub controls: SortControls,

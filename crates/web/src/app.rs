@@ -23,7 +23,7 @@ use crate::{
 		loaded_comment_tree, post_result, post_view, search_comment_tree, search_result, subreddit_feed_item, user_controls, user_profile, wiki_path, wiki_view, FeedTemplate,
 		GalleryTemplate, MoreCommentsTemplate, PostContentTemplate, PostTemplate, SearchResultView, SubredditTemplate, UserTemplate, VideoPlayerTemplate, WikiTemplate,
 	},
-	ImageDisplay,
+	ImageDisplay, WebFeatures,
 };
 
 const PAGE_SIZE: u8 = 25;
@@ -33,6 +33,7 @@ const MORE_COMMENTS_BATCH_SIZE: usize = 100;
 struct PostMedia {
 	video_support: VideoSupport,
 	image_display: ImageDisplay,
+	features: WebFeatures,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -69,7 +70,12 @@ pub struct WikiQuery {
 	v2: Option<String>,
 }
 
-pub async fn front_page(State(service): State<RedditService>, State(signer): State<MediaSigner>, Query(query): Query<FeedQuery>) -> Result<FeedTemplate, AppError> {
+pub async fn front_page(
+	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
+	State(features): State<WebFeatures>,
+	Query(query): Query<FeedQuery>,
+) -> Result<FeedTemplate, AppError> {
 	let (sort, sort_name) = parse_sort(query.sort.as_deref())?;
 	let (time, time_name) = parse_feed_time(sort, query.t.as_deref())?;
 	let page = query.page.unwrap_or(1).max(1);
@@ -97,6 +103,7 @@ pub async fn front_page(State(service): State<RedditService>, State(signer): Sta
 	let items = listing.data.children.iter().map(|thing| feed_item(&thing.data, &signer)).collect();
 
 	Ok(FeedTemplate {
+		features,
 		items,
 		controls: feed_controls("/", sort_name, time_name, false),
 		pagination,
@@ -108,6 +115,7 @@ pub async fn subreddit_feed(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(image_display): State<ImageDisplay>,
+	State(features): State<WebFeatures>,
 	Path(subreddit): Path<String>,
 	Query(query): Query<FeedQuery>,
 ) -> Result<SubredditTemplate, AppError> {
@@ -148,6 +156,7 @@ pub async fn subreddit_feed(
 	};
 
 	Ok(SubredditTemplate {
+		features,
 		community: community_view(&community.data, &signer, image_display, has_wiki),
 		items,
 		controls: feed_controls(&format!("/r/{subreddit}"), sort_name, time_name, true),
@@ -172,26 +181,29 @@ pub async fn user_posts(
 	state: State<RedditService>,
 	signer: State<MediaSigner>,
 	media: State<MediaProxy>,
+	features: State<WebFeatures>,
 	path: Path<String>,
 	query: Query<FeedQuery>,
 ) -> Result<UserTemplate, AppError> {
-	user_page(state, signer, media, path, query, UserSection::Posts).await
+	user_page(state, signer, media, features, path, query, UserSection::Posts).await
 }
 
 pub async fn user_comments(
 	state: State<RedditService>,
 	signer: State<MediaSigner>,
 	media: State<MediaProxy>,
+	features: State<WebFeatures>,
 	path: Path<String>,
 	query: Query<FeedQuery>,
 ) -> Result<UserTemplate, AppError> {
-	user_page(state, signer, media, path, query, UserSection::Comments).await
+	user_page(state, signer, media, features, path, query, UserSection::Comments).await
 }
 
 async fn user_page(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
+	State(features): State<WebFeatures>,
 	Path(username): Path<String>,
 	Query(query): Query<FeedQuery>,
 	section: UserSection,
@@ -225,6 +237,7 @@ async fn user_page(
 	let pagination = feed_pagination(base, sort_name, time_name, activity.before.as_deref(), activity.after.as_deref(), page);
 
 	Ok(UserTemplate {
+		features,
 		profile: user_profile(&user.data),
 		results: activity.results,
 		controls: user_controls(base, sort_name, time_name),
@@ -290,25 +303,28 @@ pub async fn wiki_root(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(image_display): State<ImageDisplay>,
+	State(features): State<WebFeatures>,
 	Path(subreddit): Path<String>,
 ) -> Result<Response, AppError> {
-	wiki_response(service, signer, image_display, subreddit, None, WikiQuery::default()).await
+	wiki_response(service, signer, image_display, features, subreddit, None, WikiQuery::default()).await
 }
 
 pub async fn wiki_page(
 	State(service): State<RedditService>,
 	State(signer): State<MediaSigner>,
 	State(image_display): State<ImageDisplay>,
+	State(features): State<WebFeatures>,
 	Path((subreddit, page)): Path<(String, String)>,
 	Query(query): Query<WikiQuery>,
 ) -> Result<Response, AppError> {
-	wiki_response(service, signer, image_display, subreddit, Some(page), query).await
+	wiki_response(service, signer, image_display, features, subreddit, Some(page), query).await
 }
 
 async fn wiki_response(
 	service: RedditService,
 	signer: MediaSigner,
 	image_display: ImageDisplay,
+	features: WebFeatures,
 	subreddit: String,
 	requested_page: Option<String>,
 	query: WikiQuery,
@@ -329,6 +345,7 @@ async fn wiki_response(
 	if page == "index" && has_wiki && !has_wiki_page(&pages, "index") {
 		return Ok(
 			WikiTemplate {
+				features,
 				community,
 				wiki: generated_wiki_index(&subreddit, &pages),
 			}
@@ -344,6 +361,7 @@ async fn wiki_response(
 
 	Ok(
 		WikiTemplate {
+			features,
 			community,
 			wiki: wiki_view(&subreddit, &page, &wiki, &pages, &signer, image_display),
 		}
@@ -356,6 +374,7 @@ pub async fn post_comments(
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
 	State(image_display): State<ImageDisplay>,
+	State(features): State<WebFeatures>,
 	Path(article): Path<String>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
@@ -365,6 +384,7 @@ pub async fn post_comments(
 		PostMedia {
 			video_support: media.video_support(),
 			image_display,
+			features,
 		},
 		None,
 		article,
@@ -379,6 +399,7 @@ pub async fn subreddit_post_comments(
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
 	State(image_display): State<ImageDisplay>,
+	State(features): State<WebFeatures>,
 	Path((subreddit, article)): Path<(String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
@@ -388,6 +409,7 @@ pub async fn subreddit_post_comments(
 		PostMedia {
 			video_support: media.video_support(),
 			image_display,
+			features,
 		},
 		Some(subreddit),
 		article,
@@ -402,6 +424,7 @@ pub async fn post_permalink(
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
 	State(image_display): State<ImageDisplay>,
+	State(features): State<WebFeatures>,
 	Path((article, _slug)): Path<(String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
@@ -411,6 +434,7 @@ pub async fn post_permalink(
 		PostMedia {
 			video_support: media.video_support(),
 			image_display,
+			features,
 		},
 		None,
 		article,
@@ -425,6 +449,7 @@ pub async fn post_comment_permalink(
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
 	State(image_display): State<ImageDisplay>,
+	State(features): State<WebFeatures>,
 	Path((article, _slug, comment)): Path<(String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
@@ -434,6 +459,7 @@ pub async fn post_comment_permalink(
 		PostMedia {
 			video_support: media.video_support(),
 			image_display,
+			features,
 		},
 		None,
 		article,
@@ -448,6 +474,7 @@ pub async fn subreddit_post_permalink(
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
 	State(image_display): State<ImageDisplay>,
+	State(features): State<WebFeatures>,
 	Path((subreddit, article, _slug)): Path<(String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
@@ -457,6 +484,7 @@ pub async fn subreddit_post_permalink(
 		PostMedia {
 			video_support: media.video_support(),
 			image_display,
+			features,
 		},
 		Some(subreddit),
 		article,
@@ -471,6 +499,7 @@ pub async fn subreddit_post_comment_permalink(
 	State(signer): State<MediaSigner>,
 	State(media): State<MediaProxy>,
 	State(image_display): State<ImageDisplay>,
+	State(features): State<WebFeatures>,
 	Path((subreddit, article, _slug, comment)): Path<(String, String, String, String)>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
@@ -480,6 +509,7 @@ pub async fn subreddit_post_comment_permalink(
 		PostMedia {
 			video_support: media.video_support(),
 			image_display,
+			features,
 		},
 		Some(subreddit),
 		article,
@@ -624,6 +654,7 @@ async fn post_page(
 	let search_query = search.as_deref().unwrap_or_default();
 
 	Ok(PostTemplate {
+		features: media.features,
 		controls: comment_sort_controls(sort_name, &post.item.permalink, search_query),
 		comments_heading: if search.is_some() {
 			format!("{result_count} matching comment{}", if result_count == 1 { "" } else { "s" })

@@ -1,4 +1,7 @@
-use crate::view::{custom_feed_item, pagination, CustomFeedTemplate, FeedPageMode, SelectChoice};
+use crate::{
+	view::{custom_feed_item, pagination, CustomFeedTemplate, FeedPageMode, SelectChoice},
+	WebFeatures,
+};
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::{
@@ -147,6 +150,7 @@ fn time_choices(request: &Request) -> Vec<SelectChoice> {
 
 fn form(request: &Request, nsfw_available: bool, show_builder: bool) -> CustomFeedTemplate {
 	CustomFeedTemplate {
+		features: WebFeatures { custom_feeds_enabled: true },
 		mode: if show_builder { FeedPageMode::Builder } else { FeedPageMode::Shared },
 		share_url: String::new(),
 		short_url: String::new(),

@@ -17,10 +17,6 @@ use neddit_web::ImageDisplay;
 #[serde(deny_unknown_fields)]
 pub struct Config {
 	pub server: ServerConfig,
-	pub web: SurfaceConfig,
-	pub api: SurfaceConfig,
-	pub custom_feeds: SurfaceConfig,
-	pub content: ContentConfig,
 	pub domains: DomainConfig,
 	pub media: MediaConfig,
 	pub video: VideoConfig,
@@ -31,20 +27,13 @@ pub struct Config {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools)] // Independent flags mirror the flat server configuration.
 pub struct ServerConfig {
 	pub listen: String,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SurfaceConfig {
-	pub enabled: bool,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ContentConfig {
+	pub web: bool,
+	pub api: bool,
 	pub allow_nsfw: bool,
+	pub custom_feeds: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -107,7 +96,7 @@ impl Config {
 				return Err(ConfigError::Storage("storage paths must name local files, not SQLite memory databases or URIs"));
 			}
 		}
-		if !self.web.enabled && !self.api.enabled {
+		if !self.server.web && !self.server.api {
 			return Err(ConfigError::NoSurface);
 		}
 		self
@@ -121,7 +110,7 @@ impl Config {
 		if let Some(provider) = duplicate(&self.video.providers) {
 			return Err(ConfigError::DuplicateVideoProvider(provider));
 		}
-		if !self.content.allow_nsfw && !self.video.providers.is_empty() {
+		if !self.server.allow_nsfw && !self.video.providers.is_empty() {
 			return Err(ConfigError::NsfwVideo);
 		}
 		self.domain_policy()?;
@@ -142,11 +131,13 @@ impl Config {
 impl Default for Config {
 	fn default() -> Self {
 		Self {
-			server: ServerConfig { listen: "[::]:8080".into() },
-			web: SurfaceConfig { enabled: true },
-			api: SurfaceConfig { enabled: true },
-			custom_feeds: SurfaceConfig { enabled: true },
-			content: ContentConfig { allow_nsfw: true },
+			server: ServerConfig {
+				listen: "[::]:8080".into(),
+				web: true,
+				api: true,
+				allow_nsfw: true,
+				custom_feeds: true,
+			},
 			domains: DomainConfig {
 				navigation: Vec::new(),
 				shortlinks: Vec::new(),
@@ -226,7 +217,7 @@ pub enum ConfigError {
 	EmptyVideoExecutable,
 	#[error("video provider `{0:?}` is configured more than once")]
 	DuplicateVideoProvider(VideoProvider),
-	#[error("video.providers must be empty when content.allow_nsfw is false")]
+	#[error("video.providers must be empty when server.allow_nsfw is false")]
 	NsfwVideo,
 	#[error("logging.filter is invalid")]
 	LogFilter {

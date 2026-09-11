@@ -8,6 +8,8 @@ use axum::{
 use neddit_api::service::ServiceError;
 use thiserror::Error;
 
+use crate::WebFeatures;
+
 const ERROR_DESCRIPTIONS: &[(u16, &str)] = &[
 	(400, "The request could not be understood."),
 	(401, "Authentication is required to view this page."),
@@ -28,6 +30,7 @@ const ERROR_DESCRIPTIONS: &[(u16, &str)] = &[
 #[derive(Template)]
 #[template(path = "error.html")]
 struct ErrorTemplate {
+	features: WebFeatures,
 	code: u16,
 	description: &'static str,
 }
@@ -65,6 +68,7 @@ pub(crate) fn response(status: StatusCode) -> Response {
 		.find_map(|&(code, description)| (code == status.as_u16()).then_some(description))
 		.unwrap_or("The request could not be completed.");
 	let template = ErrorTemplate {
+		features: WebFeatures { custom_feeds_enabled: false },
 		code: status.as_u16(),
 		description,
 	};

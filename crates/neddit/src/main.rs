@@ -52,16 +52,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		MediaSigner::random()?
 	}
 	.with_domains(domains.clone())
-	.with_content_policy(config.content.allow_nsfw);
+	.with_content_policy(config.server.allow_nsfw);
 	info!("creating Reddit client");
 	let cache = Cache::open(&config.cache).await?;
-	let shortlinks = if config.custom_feeds.enabled && config.shortlinks.enabled {
+	let shortlinks = if config.server.custom_feeds && config.shortlinks.enabled {
 		Some(Shortlinks::open(&config.shortlinks).await?)
 	} else {
 		None
 	};
 	let reddit = RedditClient::with_domains(domains).await?.with_cache(cache.clone());
-	let service = RedditService::with_content_policy(reddit.clone(), ContentPolicy::new(config.content.allow_nsfw)).with_storage(cache, shortlinks);
+	let service = RedditService::with_content_policy(reddit.clone(), ContentPolicy::new(config.server.allow_nsfw)).with_storage(cache, shortlinks);
 	let video_support = VideoSupport::new(&config.video.providers);
 	let video = VideoResolver::new(&config.video.executable, video_support);
 	let media = MediaProxy::new(reddit.clone(), signer, video);
@@ -69,9 +69,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		service,
 		&media,
 		config.media.image_display,
-		config.web.enabled,
-		config.api.enabled,
-		config.custom_feeds.enabled,
+		config.server.web,
+		config.server.api,
+		config.server.custom_feeds,
 	);
 
 	info!(address = %config.server.listen, version = env!("CARGO_PKG_VERSION"), "neddit listening");

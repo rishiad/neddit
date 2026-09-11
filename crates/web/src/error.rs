@@ -53,9 +53,12 @@ pub enum AppError {
 
 impl IntoResponse for AppError {
 	fn into_response(self) -> Response {
+		if matches!(&self, Self::Service(ServiceError::ContentBlocked)) {
+			return response_with_description(StatusCode::FORBIDDEN, "This server has NSFW disabled.");
+		}
 		let status = match self {
 			Self::InvalidSort | Self::InvalidFeedTime | Self::InvalidCommentSort | Self::InvalidCommentSearch => StatusCode::BAD_REQUEST,
-			Self::PostNotFound | Self::Service(ServiceError::ContentBlocked) => StatusCode::NOT_FOUND,
+			Self::PostNotFound => StatusCode::NOT_FOUND,
 			Self::Service(_) => StatusCode::BAD_GATEWAY,
 		};
 		response(status)
@@ -67,6 +70,10 @@ pub(crate) fn response(status: StatusCode) -> Response {
 		.iter()
 		.find_map(|&(code, description)| (code == status.as_u16()).then_some(description))
 		.unwrap_or("The request could not be completed.");
+	response_with_description(status, description)
+}
+
+fn response_with_description(status: StatusCode, description: &'static str) -> Response {
 	let template = ErrorTemplate {
 		features: WebFeatures { custom_feeds_enabled: false },
 		code: status.as_u16(),

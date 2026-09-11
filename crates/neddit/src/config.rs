@@ -119,9 +119,6 @@ impl Config {
 		if let Some(provider) = duplicate(&self.video.providers) {
 			return Err(ConfigError::DuplicateVideoProvider(provider));
 		}
-		if !self.server.allow_nsfw && !self.video.providers.is_empty() {
-			return Err(ConfigError::NsfwVideo);
-		}
 		self.domain_policy()?;
 		tracing_subscriber::EnvFilter::try_new(&self.logging.filter).map_err(|source| ConfigError::LogFilter { source })?;
 		Ok(())
@@ -229,8 +226,6 @@ pub enum ConfigError {
 	EmptyVideoExecutable,
 	#[error("video provider `{0:?}` is configured more than once")]
 	DuplicateVideoProvider(VideoProvider),
-	#[error("video.providers must be empty when server.allow_nsfw is false")]
-	NsfwVideo,
 	#[error("logging.filter is invalid")]
 	LogFilter {
 		#[source]

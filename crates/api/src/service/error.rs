@@ -20,6 +20,6 @@ pub enum ServiceError {
 	InvalidParameter { parameter: &'static str, value: String },
 	#[error("Reddit returned invalid thread comment search results")]
 	InvalidThreadCommentSearch,
-	#[error("content is disabled by server policy")]
+	#[error("this server has NSFW disabled")]
 	ContentBlocked,
 }

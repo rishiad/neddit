@@ -20,6 +20,9 @@ impl ApiError {
 	}
 
 	pub(super) fn message(&self) -> &'static str {
+		if matches!(self, Self::Service(ServiceError::ContentBlocked)) {
+			return "This server has NSFW disabled";
+		}
 		match self.status() {
 			StatusCode::BAD_REQUEST => "Bad Request",
 			StatusCode::UNAUTHORIZED => "Unauthorized",
@@ -38,7 +41,7 @@ fn service_status(error: &ServiceError) -> StatusCode {
 		| ServiceError::InvalidCursor { .. }
 		| ServiceError::InvalidLimit { .. }
 		| ServiceError::InvalidParameter { .. } => StatusCode::BAD_REQUEST,
-		ServiceError::ContentBlocked => StatusCode::NOT_FOUND,
+		ServiceError::ContentBlocked => StatusCode::FORBIDDEN,
 		ServiceError::Parse(_) | ServiceError::InvalidThreadCommentSearch => StatusCode::BAD_GATEWAY,
 		Client(ClientError::Unauthorized) => StatusCode::UNAUTHORIZED,
 		Client(ClientError::Quarantined | ClientError::Gated | ClientError::Private | ClientError::Banned | ClientError::Suspended) => StatusCode::FORBIDDEN,
@@ -51,3 +54,4 @@ fn service_status(error: &ServiceError) -> StatusCode {
 		Client(_) => StatusCode::BAD_GATEWAY,
 	}
 }
+

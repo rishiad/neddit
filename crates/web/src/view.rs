@@ -645,7 +645,8 @@ pub(crate) fn sanitize_html(value: &str, signer: &MediaSigner) -> String {
 		.url_relative(UrlRelative::PassThrough)
 		.attribute_filter(move |element, attribute, value| {
 			if element == "a" && attribute == "href" {
-				return Some(local_web_navigation(value, &signer).map_or_else(|| Cow::Borrowed(value), Cow::Owned));
+				let rewritten = signer.rewrite_text(value);
+				return Some(if rewritten == value { Cow::Borrowed(value) } else { Cow::Owned(rewritten) });
 			}
 			if attribute == "id" && !value.starts_with("wiki_") {
 				return None;

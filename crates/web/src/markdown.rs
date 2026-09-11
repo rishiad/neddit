@@ -225,20 +225,29 @@ fn resolve_media_source(destination: &str, metadata: Option<&Value>) -> Option<S
 	if Url::parse(&destination.replace("&amp;", "&")).is_ok() || destination.starts_with("//") {
 		return Some(destination.to_owned());
 	}
-	let metadata = metadata?.as_object()?;
-	let media = metadata.get(destination).or_else(|| destination.strip_prefix("giphy|").and_then(|id| metadata.get(id)))?;
-	media
-		.pointer("/s/gif")
-		.or_else(|| media.pointer("/s/u"))
-		.or_else(|| {
-			media
-				.get("p")
-				.and_then(Value::as_array)
-				.and_then(|previews| previews.last())
-				.and_then(|preview| preview.get("u"))
+	let metadata_source = metadata
+		.and_then(Value::as_object)
+		.and_then(|metadata| metadata.get(destination).or_else(|| destination.strip_prefix("giphy|").and_then(|id| metadata.get(id))))
+		.and_then(|media| {
+			media.pointer("/s/gif").or_else(|| media.pointer("/s/u")).or_else(|| {
+				media
+					.get("p")
+					.and_then(Value::as_array)
+					.and_then(|previews| previews.last())
+					.and_then(|preview| preview.get("u"))
+			})
 		})
 		.and_then(Value::as_str)
-		.map(str::to_owned)
+		.map(str::to_owned);
+	metadata_source.or_else(|| giphy_source(destination))
+}
+
+fn giphy_source(destination: &str) -> Option<String> {
+	let id = destination.strip_prefix("giphy|")?;
+	if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+		return None;
+	}
+	Some(format!("https://media.giphy.com/media/{id}/giphy.gif"))
 }
 
 fn fallback_alt(alt: &str) -> String {

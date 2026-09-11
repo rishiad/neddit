@@ -215,8 +215,7 @@ a:focus-visible {
   color: var(--muted);
 }
 
-.mobile-metric,
-.comment-mobile-score {
+.mobile-metric {
   display: none;
 }
 
@@ -641,7 +640,6 @@ a:focus-visible {
 }
 
 .comment-folder-button:checked ~ .comment:not(:target) .comment-body,
-.comment-folder-button:checked ~ .comment:not(:target) .comment-score,
 .comment-folder-button:checked ~ .comment-tree {
   display: none;
 }
@@ -662,22 +660,22 @@ a:focus-visible {
   color: var(--muted);
 }
 
-.comment-meta > a,
-.comment-meta > p,
-.comment-meta > span:not(.comment-mobile-score) {
+.comment-byline,
+.comment-actions {
+  display: contents;
+}
+
+.comment-meta :is(a, span) {
   position: relative;
   z-index: 1;
   color: rgb(51 51 51 / 75%);
   font-weight: normal;
 }
 
-.comment-meta > p {
-  margin: 0;
-}
-
-.comment-meta > a,
-.comment-meta > p {
-  color: rgb(51 51 51 / 75%);
+.comment-stats {
+  display: inline-flex;
+  gap: 0.65em;
+  white-space: nowrap;
 }
 
 .comment-row-folder {
@@ -698,11 +696,11 @@ a:focus-visible {
   white-space: pre-wrap;
 }
 
-.comments-root .comment-tree .comments-subtree:has(+ .comments-subtree)::before {
+.comments-root > .comments-subtree .comments-subtree .comments-subtree:has(+ .comments-subtree)::before {
   position: absolute;
   top: 3.6lh;
   bottom: 0;
-  left: calc(1em - 1px);
+  left: 0.875rem;
   border-left: 2px dotted #bbb;
   content: "";
 }
@@ -1309,8 +1307,7 @@ a:focus-visible {
     padding-top: 0.75rem;
   }
 
-  .mobile-metric,
-  .comment-mobile-score {
+  .mobile-metric {
     display: inline-flex;
   }
 
@@ -1403,7 +1400,7 @@ a:focus-visible {
   }
 
   .comment-tree {
-    margin-left: 0.25rem;
+    margin-left: 1rem;
     padding-left: 0.25rem;
   }
 
@@ -1413,41 +1410,39 @@ a:focus-visible {
   }
 
   .comment {
-    grid-template-columns: 2.25rem minmax(0, 1fr);
+    grid-template-columns: 2rem minmax(0, 1fr);
     padding: 0.5rem 0 0.75rem;
   }
 
   .comment-voters {
-    width: 2.25rem;
+    width: 2rem;
     margin-left: 0;
     grid-row: 1;
   }
 
   .comment-folder {
     display: grid;
-    width: 2.25rem;
+    width: 2rem;
     height: 2.25rem;
     place-items: center;
   }
 
-  .comment-voters .comment-score {
-    display: none;
-  }
-
   .comment-meta {
-    align-items: center;
-    min-height: 2.25rem;
-    gap: 0.15rem 0.6rem;
+    display: grid;
+    align-items: stretch;
+    min-height: 4.5rem;
+    gap: 0;
     font-size: 0.875rem;
     line-height: 1.35;
   }
 
-  .comment-meta > a,
-  .comment-meta > p,
-  .comment-meta > span:not(.comment-mobile-score) {
-    display: inline-flex;
+  .comment-byline,
+  .comment-actions {
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
     min-height: 2.25rem;
+    gap: 0.15rem 0.6rem;
   }
 
   .comment-body {
@@ -1456,15 +1451,15 @@ a:focus-visible {
   }
 
   .comments-root .comment-tree .comment-body {
-    padding-left: 0.5rem;
+    padding-left: 1.5rem;
   }
 
-  .comments-root .comment-tree .comments-subtree:has(+ .comments-subtree)::before {
-    left: -0.25rem;
+  .comments-root > .comments-subtree .comments-subtree .comments-subtree:has(+ .comments-subtree)::before {
+    left: 0.9375rem;
   }
 
   .more-comments {
-    margin-left: 2.25rem;
+    margin-left: 2rem;
   }
 
   .search-primary-controls legend {

@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	.with_content_policy(config.content.allow_nsfw);
 	info!("creating Reddit client");
 	let cache = Cache::open(&config.cache).await?;
-	let shortlinks = if config.shortlinks.enabled {
+	let shortlinks = if config.custom_feeds.enabled && config.shortlinks.enabled {
 		Some(Shortlinks::open(&config.shortlinks).await?)
 	} else {
 		None
@@ -65,7 +65,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let video_support = VideoSupport::new(&config.video.providers);
 	let video = VideoResolver::new(&config.video.executable, video_support);
 	let media = MediaProxy::new(reddit.clone(), signer, video);
-	let app = neddit::router(service, &media, config.media.image_display, config.web.enabled, config.api.enabled);
+	let app = neddit::router(
+		service,
+		&media,
+		config.media.image_display,
+		config.web.enabled,
+		config.api.enabled,
+		config.custom_feeds.enabled,
+	);
 
 	info!(address = %config.server.listen, version = env!("CARGO_PKG_VERSION"), "neddit listening");
 	let result = server::listen(app, &config.server.listen).await;

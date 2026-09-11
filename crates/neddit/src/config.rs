@@ -19,6 +19,7 @@ pub struct Config {
 	pub server: ServerConfig,
 	pub web: SurfaceConfig,
 	pub api: SurfaceConfig,
+	pub custom_feeds: SurfaceConfig,
 	pub content: ContentConfig,
 	pub domains: DomainConfig,
 	pub media: MediaConfig,
@@ -144,6 +145,7 @@ impl Default for Config {
 			server: ServerConfig { listen: "[::]:8080".into() },
 			web: SurfaceConfig { enabled: true },
 			api: SurfaceConfig { enabled: true },
+			custom_feeds: SurfaceConfig { enabled: true },
 			content: ContentConfig { allow_nsfw: true },
 			domains: DomainConfig {
 				navigation: Vec::new(),

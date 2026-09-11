@@ -44,6 +44,12 @@ struct WebState {
 	signer: MediaSigner,
 	media: MediaProxy,
 	image_display: ImageDisplay,
+	features: WebFeatures,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct WebFeatures {
+	pub custom_feeds_enabled: bool,
 }
 
 impl FromRef<WebState> for RedditService {
@@ -70,22 +76,23 @@ impl FromRef<WebState> for ImageDisplay {
 	}
 }
 
-pub fn router(service: RedditService, media: MediaProxy, image_display: ImageDisplay) -> Router {
+impl FromRef<WebState> for WebFeatures {
+	fn from_ref(state: &WebState) -> Self {
+		state.features
+	}
+}
+
+pub fn router(service: RedditService, media: MediaProxy, image_display: ImageDisplay, custom_feeds_enabled: bool) -> Router {
 	let video_enabled = !media.video_support().is_empty();
 	let state = WebState {
 		service,
 		signer: media.signer().clone(),
 		media: media.clone(),
 		image_display,
+		features: WebFeatures { custom_feeds_enabled },
 	};
 	let mut app = Router::new()
 		.route("/", get(app::front_page))
-		.route(
-			"/feeds",
-			get(custom_feed::builder).post(custom_feed::create).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
-		)
-		.route("/feed", get(custom_feed::page))
-		.route("/f/{id}", get(custom_feed::saved))
 		.route("/search", get(search::page))
 		.route("/more-comments", get(app::more_comments))
 		.route("/gallery/{article}/{index}", get(app::gallery))
@@ -104,12 +111,21 @@ pub fn router(service: RedditService, media: MediaProxy, image_display: ImageDis
 		.route("/r/{subreddit}/comments/{article}/{slug}", get(app::subreddit_post_permalink))
 		.route("/r/{subreddit}/comments/{article}/{slug}/", get(app::subreddit_post_permalink))
 		.route("/r/{subreddit}/comments/{article}/{slug}/{comment}", get(app::subreddit_post_comment_permalink));
+	if custom_feeds_enabled {
+		app = app
+			.route(
+				"/feeds",
+				get(custom_feed::builder).post(custom_feed::create).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
+			)
+			.route("/feed", get(custom_feed::page))
+			.route("/f/{id}", get(custom_feed::saved));
+	}
 	if video_enabled {
 		app = app.route("/video/player", get(app::video_player));
 	}
 	let app = app
 		.with_state(state)
-		.merge(system_routes())
+		.merge(system_routes(custom_feeds_enabled))
 		.merge(neddit_api::server::with_middleware(neddit_api::server::router(media)));
 	#[cfg(debug_assertions)]
 	let app = app.layer(LiveReloadLayer::new());
@@ -119,11 +135,12 @@ pub fn router(service: RedditService, media: MediaProxy, image_display: ImageDis
 		.layer(middleware::from_fn(security_headers))
 }
 
-fn system_routes() -> Router {
-	health_router()
-		.route("/assets/app.css", get(stylesheet))
-		.route("/feeds/controls", get(custom_feed::controls))
-		.route("/search/controls", get(search::controls))
+fn system_routes(custom_feeds_enabled: bool) -> Router {
+	let mut router = health_router().route("/assets/app.css", get(stylesheet)).route("/search/controls", get(search::controls));
+	if custom_feeds_enabled {
+		router = router.route("/feeds/controls", get(custom_feed::controls));
+	}
+	router
 }
 
 pub fn health_router() -> Router {

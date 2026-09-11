@@ -10,17 +10,20 @@ mod url_rewrite;
 use crate::{media::MediaSigner, service::RedditService};
 use axum::{extract::Request, http::uri::PathAndQuery, Router};
 use tower::{util::MapRequest, ServiceExt};
+use utoipa_axum::{router::OpenApiRouter, routes};
 
-pub fn router(service: RedditService) -> Router {
-	let custom = Router::new()
-		.route("/api/search/ql", axum::routing::get(ql_search))
-		.route("/api/feed", axum::routing::get(custom_feed))
-		.route("/api/feeds", axum::routing::post(create_feed).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)))
-		.route("/api/feeds/{id}", axum::routing::get(saved_feed))
-		.with_state(service.clone());
-	docs::finish(docs::router().merge(routes::router()).merge(public_routes::router()), service)
-		.merge(custom)
-		
+pub fn router(service: RedditService, custom_feeds_enabled: bool) -> Router {
+	let mut documented = docs::router().merge(routes::router()).merge(public_routes::router()).routes(routes!(ql_search));
+	if custom_feeds_enabled {
+		let create = OpenApiRouter::new()
+			.routes(routes!(create_feed))
+			.route_layer(axum::extract::DefaultBodyLimit::max(16 * 1024));
+		documented = documented
+			.routes(routes!(custom_feed))
+			.routes(routes!(saved_feed))
+			.merge(create);
+	}
+	docs::finish(documented, service)
 }
 
 /// Execute validated QL against bounded REST sources. Cursors expire after 15 minutes or eviction.

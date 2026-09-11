@@ -68,6 +68,7 @@ pub struct SortControls {
 #[derive(Template, WebTemplate)]
 #[template(path = "feed.html")]
 pub struct FeedTemplate {
+	pub custom_feeds_enabled: bool,
 	pub items: Vec<FeedItem>,
 	pub controls: SortControls,
 	pub pagination: Pagination,
@@ -77,8 +78,10 @@ pub struct FeedTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "custom_feed.html")]
 pub struct CustomFeedTemplate {
+	pub custom_feeds_enabled: bool,
 	pub mode: FeedPageMode,
 	pub share_url: String,
+	pub short_url: String,
 	pub create_action: Option<&'static str>,
 	pub query: String,
 	pub rank: String,
@@ -138,6 +141,7 @@ pub struct SearchMetadata {
 #[derive(Template, WebTemplate)]
 #[template(path = "search.html")]
 pub struct SearchTemplate {
+	pub custom_feeds_enabled: bool,
 	pub query: String,
 	pub include_nsfw: bool,
 	pub nsfw_available: bool,
@@ -180,6 +184,7 @@ pub struct UserProfileView {
 #[derive(Template, WebTemplate)]
 #[template(path = "user.html")]
 pub struct UserTemplate {
+	pub custom_feeds_enabled: bool,
 	pub profile: UserProfileView,
 	pub results: Vec<SearchResultView>,
 	pub controls: SortControls,
@@ -193,6 +198,7 @@ pub struct UserTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "subreddit.html")]
 pub struct SubredditTemplate {
+	pub custom_feeds_enabled: bool,
 	pub community: CommunityView,
 	pub items: Vec<FeedItem>,
 	pub controls: SortControls,
@@ -220,6 +226,7 @@ pub struct WikiView {
 #[derive(Template, WebTemplate)]
 #[template(path = "wiki.html")]
 pub struct WikiTemplate {
+	pub custom_feeds_enabled: bool,
 	pub community: CommunityView,
 	pub wiki: WikiView,
 }
@@ -281,6 +288,7 @@ pub enum CommentTreeEvent {
 #[derive(Template, WebTemplate)]
 #[template(path = "post.html")]
 pub struct PostTemplate {
+	pub custom_feeds_enabled: bool,
 	pub post: PostView,
 	pub comment_tree: Vec<CommentTreeEvent>,
 	pub controls: SortControls,
@@ -318,7 +326,10 @@ pub fn feed_item(post: &Post, signer: &MediaSigner) -> FeedItem {
 	let href = if post.is_self {
 		permalink.clone()
 	} else {
-		safe_outbound(&post.url, signer).unwrap_or_else(|| permalink.clone())
+		post_media_url(post, signer)
+			.filter(|_| !post.spoiler)
+			.or_else(|| safe_outbound(&post.url, signer))
+			.unwrap_or_else(|| permalink.clone())
 	};
 	let domain = outbound_domain(&href).unwrap_or_default();
 	let mut badges = Vec::with_capacity(4);
@@ -365,13 +376,8 @@ pub fn subreddit_feed_item(post: &Post, signer: &MediaSigner, subreddit_is_nsfw:
 	item
 }
 
-pub fn feed_item_with_media(post: &Post, signer: &MediaSigner, video_support: VideoSupport) -> FeedItem {
+pub fn feed_item_with_video(post: &Post, signer: &MediaSigner, video_support: VideoSupport) -> FeedItem {
 	let mut item = feed_item(post, signer);
-	if let Some(rewritten) = post_media_url(post, signer).filter(|_| !post.spoiler) {
-		item.href = rewritten;
-		item.domain.clear();
-		item.show_domain = false;
-	}
 	if video_support.supports(&post.url) {
 		let mut query = form_urlencoded::Serializer::new(String::new());
 		query.append_pair("url", &post.url);
@@ -384,7 +390,7 @@ pub fn feed_item_with_media(post: &Post, signer: &MediaSigner, video_support: Vi
 }
 
 pub fn custom_feed_item(post: &Post, signer: &MediaSigner, video_support: VideoSupport, include_nsfw: bool) -> FeedItem {
-	let mut item = feed_item_with_media(post, signer, video_support);
+	let mut item = feed_item_with_video(post, signer, video_support);
 	item.flair = post_flair(post);
 	if include_nsfw {
 		item.badges.retain(|badge| *badge != "NSFW");
@@ -458,7 +464,7 @@ pub fn search_result(item: &PublicThing, signer: &MediaSigner, video_support: Vi
 }
 
 pub fn post_result(post: &Post, signer: &MediaSigner, video_support: VideoSupport) -> SearchResultView {
-	let item = feed_item_with_media(post, signer, video_support);
+	let item = feed_item_with_video(post, signer, video_support);
 	SearchResultView {
 		fullname: post.name.clone(),
 		metric: item.score,
@@ -655,7 +661,7 @@ fn nonempty(value: &str) -> Option<String> {
 }
 
 pub fn post_view(post: &Post, signer: &MediaSigner, video_support: VideoSupport, image_display: ImageDisplay) -> PostView {
-	let mut item = feed_item_with_media(post, signer, video_support);
+	let mut item = feed_item_with_video(post, signer, video_support);
 	item.flair = post_flair(post);
 	let gallery = gallery_view(post, signer, image_display, 0);
 	let image_url = if gallery.is_none() && item.video.is_none() && is_image_post(post) {

@@ -5,16 +5,23 @@ pub mod config;
 use axum::{middleware, Router};
 use neddit_api::{api, server, server::MediaProxy, service::RedditService};
 
-pub fn router(service: RedditService, media: &MediaProxy, image_display: neddit_web::ImageDisplay, web_enabled: bool, api_enabled: bool) -> Router {
+pub fn router(
+	service: RedditService,
+	media: &MediaProxy,
+	image_display: neddit_web::ImageDisplay,
+	web_enabled: bool,
+	api_enabled: bool,
+	custom_feeds_enabled: bool,
+) -> Router {
 	let mut app = if web_enabled {
-		neddit_web::router(service.clone(), media.clone(), image_display)
+		neddit_web::router(service.clone(), media.clone(), image_display, custom_feeds_enabled)
 	} else {
 		server::with_middleware(server::router(media.clone())).merge(neddit_web::health_router())
 	};
 	if api_enabled {
 		app = app.merge(server::with_middleware(server::video_router(media.clone())));
 		let signer = media.signer().clone();
-		let api = api::with_json_aliases(api::with_reddit_urls(api::router(service), signer));
+		let api = api::with_json_aliases(api::with_reddit_urls(api::router(service, custom_feeds_enabled), signer));
 		let api = server::with_middleware(Router::new().fallback_service(api));
 		app = app.fallback_service(api);
 	}

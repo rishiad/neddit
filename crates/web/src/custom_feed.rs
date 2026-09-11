@@ -4,7 +4,7 @@ use askama_web::WebTemplate;
 use axum::{
 	extract::{Path, Query, State},
 	http::{HeaderMap, StatusCode},
-	response::{IntoResponse, Redirect, Response},
+	response::{IntoResponse, Response},
 	Form,
 };
 use neddit_api::{
@@ -31,19 +31,25 @@ pub async fn controls(Query(request): Query<Request>) -> FeedControls {
 }
 
 pub async fn builder(State(service): State<RedditService>, State(signer): State<MediaSigner>, State(media): State<MediaProxy>, Query(request): Query<Request>) -> Response {
-	render(service, signer, media, request, "/feeds").await
+	render(service, signer, media, request, "/feeds", String::new()).await
 }
 
 pub async fn page(State(service): State<RedditService>, State(signer): State<MediaSigner>, State(media): State<MediaProxy>, Query(request): Query<Request>) -> Response {
-	render(service, signer, media, request, "/feed").await
+	render(service, signer, media, request, "/feed", String::new()).await
 }
 
-pub async fn create(State(service): State<RedditService>, headers: HeaderMap, Form(request): Form<Request>) -> Response {
+pub async fn create(
+	State(service): State<RedditService>,
+	State(signer): State<MediaSigner>,
+	State(media): State<MediaProxy>,
+	headers: HeaderMap,
+	Form(request): Form<Request>,
+) -> Response {
 	if headers.get("sec-fetch-site").is_some_and(|site| site == "cross-site") {
 		return (StatusCode::FORBIDDEN, "Cross-site feed creation is not allowed").into_response();
 	}
 	match service.save_feed(&request).await {
-		Ok(feed) => Redirect::to(&format!("/f/{}", feed.id)).into_response(),
+		Ok(feed) => render(service, signer, media, request, "/feeds", feed.url).await,
 		Err(error) => (neddit_api::feed::status(&error), error.to_string()).into_response(),
 	}
 }
@@ -56,15 +62,15 @@ pub async fn saved(
 	Query(continuation): Query<Continuation>,
 ) -> Response {
 	match service.saved_feed(&id, continuation).await {
-		Ok(request) => render(service, signer, media, request, &format!("/f/{id}")).await,
+		Ok(request) => render(service, signer, media, request, &format!("/f/{id}"), String::new()).await,
 		Err(error) => (neddit_api::feed::status(&error), error.to_string()).into_response(),
 	}
 }
 
-async fn render(service: RedditService, signer: MediaSigner, media: MediaProxy, request: Request, base: &str) -> Response {
+async fn render(service: RedditService, signer: MediaSigner, media: MediaProxy, request: Request, base: &str, short_url: String) -> Response {
 	let show_builder = base == "/feeds";
 	let mut view = form(&request, service.allows_nsfw(), show_builder);
-	view.create_action = service.shortlinks_enabled().then_some("/feeds");
+	view.create_action = (show_builder && service.shortlinks_enabled()).then_some("/feeds");
 	view.share_url = if let Some(id) = base.strip_prefix("/f/") {
 		service.feed_url(id).unwrap_or_else(|| base.into())
 	} else if !request.q.trim().is_empty() {
@@ -72,6 +78,7 @@ async fn render(service: RedditService, signer: MediaSigner, media: MediaProxy, 
 	} else {
 		String::new()
 	};
+	view.short_url = short_url;
 	if request.q.trim().is_empty() {
 		if !show_builder {
 			view.diagnostic = "A shared feed URL requires a q parameter".into();
@@ -142,6 +149,7 @@ fn form(request: &Request, nsfw_available: bool, show_builder: bool) -> CustomFe
 	CustomFeedTemplate {
 		mode: if show_builder { FeedPageMode::Builder } else { FeedPageMode::Shared },
 		share_url: String::new(),
+		short_url: String::new(),
 		create_action: None,
 		query: request.q.clone(),
 		rank: expand_rank_preset(request.rank()).into(),

@@ -5,7 +5,7 @@
 {% block content %}
   {% if mode.is_builder() %}
     <section class="feed-builder" aria-label="Feed builder">
-      <form class="search-form feed-form" action="/feeds" method="get">
+      <form class="search-form feed-form" id="feed-builder-form" action="/feeds" method="get">
         <div class="feed-field">
           <label for="feed-q">Feed Query:</label>
           <input id="feed-q" name="q" type="search" value="{{ query }}" maxlength="4096"
@@ -32,7 +32,6 @@
         </div>
         {% if nsfw_available %}<label class="feed-checkbox"><input type="checkbox" name="include_nsfw" value="true"{% if include_nsfw %} checked{% endif %}> Include NSFW posts</label>{% endif %}
         <button class="feed-submit" type="submit">Build Feed</button>
-        {% match create_action %}{% when Some with (action) %}<button type="submit" formmethod="post" formaction="{{ action }}">Create shortlink</button>{% when None %}{% endmatch %}
       </form>
     </section>
   {% endif %}
@@ -40,9 +39,19 @@
   {% if !diagnostic.is_empty() %}<p role="alert">{{ diagnostic }}</p>{% endif %}
 
   {% if !share_url.is_empty() %}
-    <section class="feed-share" aria-label="Shareable feed URL">
-      <label class="visually-hidden" for="feed-share-url">Shareable feed URL</label>
-      <input id="feed-share-url" type="text" value="{{ share_url }}" readonly>
+    <section class="feed-share" aria-label="Feed links">
+      <div class="feed-share-field">
+        <label for="feed-share-url">Custom Feed Link:</label>
+        <input id="feed-share-url" type="text" value="{{ share_url }}" readonly>
+      </div>
+      {% if short_url.is_empty() %}
+        {% match create_action %}{% when Some with (action) %}<button class="feed-shortlink-submit" type="submit" form="feed-builder-form" formmethod="post" formaction="{{ action }}">Create a short link</button>{% when None %}{% endmatch %}
+      {% else %}
+        <div class="feed-share-field">
+          <label for="feed-short-url">Short Link:</label>
+          <input id="feed-short-url" type="text" value="{{ short_url }}" readonly>
+        </div>
+      {% endif %}
     </section>
   {% endif %}
   {% if searched %}

@@ -252,6 +252,18 @@ impl MediaSigner {
 		}
 		let host = target.host_str()?.to_ascii_lowercase();
 
+		if self.domains.is_media_host(&host) {
+			let fragment = target.fragment().map(str::to_owned);
+			target.set_fragment(None);
+			target.set_scheme("https").ok()?;
+			target.set_port(None).ok()?;
+			let mut rewritten = self.media_url(&target).ok()?;
+			if let Some(fragment) = fragment {
+				rewritten.push('#');
+				rewritten.push_str(&fragment);
+			}
+			return Some(rewritten);
+		}
 		if self.domains.is_navigation_host(&host) {
 			return Some(local_path(&target));
 		}
@@ -260,20 +272,7 @@ impl MediaSigner {
 			target.set_path(&format!("/comments/{path}"));
 			return Some(local_path(&target));
 		}
-		if !self.domains.is_media_host(&host) {
-			return None;
-		}
-
-		let fragment = target.fragment().map(str::to_owned);
-		target.set_fragment(None);
-		target.set_scheme("https").ok()?;
-		target.set_port(None).ok()?;
-		let mut rewritten = self.media_url(&target).ok()?;
-		if let Some(fragment) = fragment {
-			rewritten.push('#');
-			rewritten.push_str(&fragment);
-		}
-		Some(rewritten)
+		None
 	}
 
 	fn rewrite_media_reference(&self, reference: &str, source: &Url) -> Result<String, MediaUrlError> {

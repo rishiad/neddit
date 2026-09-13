@@ -167,4 +167,3 @@ fn set_security_headers(response: &mut Response) {
 	headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
 	headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
 }
-

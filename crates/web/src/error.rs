@@ -111,4 +111,3 @@ pub async fn html_error_pages(request: Request, next: Next) -> Response {
 	}
 	response
 }
-

@@ -1268,4 +1268,3 @@ fn age(timestamp: f64) -> String {
 fn unix_now() -> f64 {
 	SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |duration| duration.as_secs_f64())
 }
-

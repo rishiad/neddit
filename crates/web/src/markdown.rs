@@ -67,11 +67,27 @@ fn preprocess(source: &str) -> (String, Markers) {
 			output.push_str(line);
 		} else if fence.is_some() || indent >= 4 {
 			output.push_str(line);
+		} else if let Some(prefix_length) = reddit_heading_prefix(trimmed) {
+			output.push_str(&line[..indent + prefix_length]);
+			output.push(' ');
+			preprocess_inline(&line[indent + prefix_length..], &markers, &mut output);
 		} else {
 			preprocess_inline(line, &markers, &mut output);
 		}
 	}
 	(output, markers)
+}
+
+fn reddit_heading_prefix(line: &str) -> Option<usize> {
+	let length = line.as_bytes().iter().take_while(|&&byte| byte == b'#').count();
+	if !(1..=6).contains(&length) {
+		return None;
+	}
+	line
+		.as_bytes()
+		.get(length)
+		.is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b'#')
+		.then_some(length)
 }
 
 fn fence_delimiter(line: &str) -> Option<(u8, usize)> {
@@ -414,4 +430,3 @@ fn url_length(text: &str) -> usize {
 	}
 	length
 }
-

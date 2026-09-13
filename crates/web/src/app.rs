@@ -752,4 +752,3 @@ fn parse_user_time(sort: UserHistorySort, value: Option<&str>) -> Result<(Option
 		_ => Err(AppError::InvalidFeedTime),
 	}
 }
-

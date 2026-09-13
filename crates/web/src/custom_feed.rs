@@ -153,4 +153,3 @@ fn form(request: &Request, nsfw_available: bool, show_builder: bool) -> CustomFe
 		pagination: pagination(1, String::new(), String::new()),
 	}
 }
-

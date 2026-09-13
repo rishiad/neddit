@@ -121,5 +121,3 @@ fn form_with_features(request: &Request, nsfw_available: bool, custom_feeds_enab
 		error_suffix: String::new(),
 	}
 }
-
-

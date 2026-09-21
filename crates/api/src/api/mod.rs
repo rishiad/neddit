@@ -1,6 +1,5 @@
 mod docs;
 mod error;
-mod public_query;
 mod public_routes;
 mod query;
 mod response;

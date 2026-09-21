@@ -1,10 +1,11 @@
 use crate::service::ListingQuery;
 use utoipa::{IntoParams, ToSchema};
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, IntoParams)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct UserHistoryQuery {
 	#[param(ignore)]
+	#[serde(flatten)]
 	pub listing: ListingQuery,
 	#[param(minimum = 2, maximum = 10)]
 	pub context: Option<u8>,
@@ -13,25 +14,20 @@ pub struct UserHistoryQuery {
 	#[param(inline)]
 	pub sort: Option<UserHistorySort>,
 	#[param(rename = "type", inline)]
+	#[serde(rename = "type")]
 	pub content_type: Option<UserHistoryType>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ToSchema)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize, ToSchema)]
 #[schema(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum UserHistoryShow {
 	Given,
 }
 
-impl UserHistoryShow {
-	pub(super) const fn as_str(self) -> &'static str {
-		match self {
-			Self::Given => "given",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ToSchema)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize, ToSchema)]
 #[schema(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum UserHistorySort {
 	Hot,
 	New,
@@ -39,30 +35,12 @@ pub enum UserHistorySort {
 	Controversial,
 }
 
-impl UserHistorySort {
-	pub(super) const fn as_str(self) -> &'static str {
-		match self {
-			Self::Hot => "hot",
-			Self::New => "new",
-			Self::Top => "top",
-			Self::Controversial => "controversial",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ToSchema)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize, ToSchema)]
 pub enum UserHistoryType {
 	#[schema(rename = "links")]
+	#[serde(rename = "links")]
 	Posts,
 	#[schema(rename = "comments")]
+	#[serde(rename = "comments")]
 	Comments,
-}
-
-impl UserHistoryType {
-	pub(super) const fn as_str(self) -> &'static str {
-		match self {
-			Self::Posts => "links",
-			Self::Comments => "comments",
-		}
-	}
 }

@@ -1,10 +1,10 @@
 use crate::models::{Listing, Post, Thing, WikiPage, WikiPageListing, WikiRevision};
 use crate::parsing::wiki::{parse_wiki_discussions, parse_wiki_page, parse_wiki_page_listing, parse_wiki_revisions};
-use crate::service::reddit::{append_listing_query, invalid_parameter, validate_listing_query, validate_subreddit, validate_wiki_listing_query, with_query};
+use crate::service::query_codec;
+use crate::service::reddit::{invalid_parameter, validate_listing_query, validate_subreddit, validate_wiki_listing_query, with_query};
 use crate::service::sanitize::clear_listing_modhash;
 use crate::service::{ListingQuery, RedditService, ServiceError, WikiPageQuery};
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
-use url::form_urlencoded::Serializer;
 use uuid::Uuid;
 
 impl RedditService {
@@ -20,7 +20,7 @@ impl RedditService {
 		self.require_safe_subreddit(subreddit).await?;
 		let page = encode_wiki_page(page)?;
 		validate_wiki_page_query(query)?;
-		let path = with_query(format!("/r/{subreddit}/wiki/{page}"), encode_wiki_page_query(query));
+		let path = with_query(format!("/r/{subreddit}/wiki/{page}"), query_codec::encode(query));
 		let json = self.client.json(path).await?;
 		Ok(parse_wiki_page(&json)?)
 	}
@@ -33,7 +33,7 @@ impl RedditService {
 			Some(page) => format!("/r/{subreddit}/wiki/revisions/{}", encode_wiki_page(page)?),
 			None => format!("/r/{subreddit}/wiki/revisions"),
 		};
-		let path = with_query(base, encode_listing_query(query));
+		let path = with_query(base, query_codec::encode(query));
 		let json = self.client.json(path).await?;
 		let mut listing = parse_wiki_revisions(&json)?;
 		clear_listing_modhash(&mut listing);
@@ -45,7 +45,7 @@ impl RedditService {
 		self.require_safe_subreddit(subreddit).await?;
 		validate_listing_query(query)?;
 		let page = encode_wiki_page(page)?;
-		let path = with_query(format!("/r/{subreddit}/wiki/discussions/{page}"), encode_listing_query(query));
+		let path = with_query(format!("/r/{subreddit}/wiki/discussions/{page}"), query_codec::encode(query));
 		let json = self.client.json(path).await?;
 		let mut listing = parse_wiki_discussions(&json)?;
 		clear_listing_modhash(&mut listing);
@@ -75,21 +75,4 @@ fn validate_wiki_page_query(query: &WikiPageQuery) -> Result<(), ServiceError> {
 		}
 	}
 	Ok(())
-}
-
-fn encode_wiki_page_query(query: &WikiPageQuery) -> String {
-	let mut serializer = Serializer::new(String::new());
-	if let Some(revision) = &query.v {
-		serializer.append_pair("v", revision);
-	}
-	if let Some(revision) = &query.v2 {
-		serializer.append_pair("v2", revision);
-	}
-	serializer.finish()
-}
-
-fn encode_listing_query(query: &ListingQuery) -> String {
-	let mut serializer = Serializer::new(String::new());
-	append_listing_query(&mut serializer, query);
-	serializer.finish()
 }

@@ -1,26 +1,22 @@
 use crate::service::CommentSort;
 use utoipa::{IntoParams, ToSchema};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ToSchema)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize, ToSchema)]
 #[schema(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum MoreChildrenApiType {
+	#[default]
 	Json,
 }
 
-impl MoreChildrenApiType {
-	pub(super) const fn as_str(self) -> &'static str {
-		match self {
-			Self::Json => "json",
-		}
-	}
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq, IntoParams)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct MoreChildrenQuery {
 	#[param(inline)]
-	pub api_type: Option<MoreChildrenApiType>,
+	#[serde(default)]
+	pub api_type: MoreChildrenApiType,
 	#[param(explode = false)]
+	#[serde(default, with = "crate::service::query_codec::comma", skip_serializing_if = "Vec::is_empty")]
 	pub children: Vec<String>,
 	pub depth: Option<u32>,
 	pub id: Option<String>,

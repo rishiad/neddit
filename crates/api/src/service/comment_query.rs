@@ -1,7 +1,8 @@
 use utoipa::{IntoParams, ToSchema};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ToSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
 #[schema(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum CommentSort {
 	#[default]
 	Confidence,
@@ -29,23 +30,15 @@ impl CommentSort {
 	}
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
 #[schema(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum CommentTheme {
 	Default,
 	Dark,
 }
 
-impl CommentTheme {
-	pub(super) const fn as_str(self) -> &'static str {
-		match self {
-			Self::Default => "default",
-			Self::Dark => "dark",
-		}
-	}
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, IntoParams)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct CommentQuery {
 	pub comment: Option<String>,

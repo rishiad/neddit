@@ -8,6 +8,7 @@ mod more_children;
 mod more_children_query;
 mod post_sort;
 mod public_read;
+mod query_codec;
 mod reddit;
 mod sanitize;
 mod search_query;

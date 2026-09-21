@@ -7,14 +7,14 @@ use thiserror::Error;
 pub(super) enum ApiError {
 	#[error(transparent)]
 	Service(#[from] ServiceError),
-	#[error("invalid `{parameter}` query value `{value}`")]
-	InvalidQuery { parameter: String, value: String },
+	#[error("invalid query")]
+	InvalidQuery,
 }
 
 impl ApiError {
 	pub(super) fn status(&self) -> StatusCode {
 		match self {
-			Self::InvalidQuery { .. } => StatusCode::BAD_REQUEST,
+			Self::InvalidQuery => StatusCode::BAD_REQUEST,
 			Self::Service(error) => service_status(error),
 		}
 	}

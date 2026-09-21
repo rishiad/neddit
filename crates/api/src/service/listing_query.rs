@@ -1,17 +1,10 @@
 use utoipa::{IntoParams, ToSchema};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
 #[schema(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum ListingShow {
 	All,
-}
-
-impl ListingShow {
-	pub(super) const fn as_str(self) -> &'static str {
-		match self {
-			Self::All => "all",
-		}
-	}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ToSchema)]
@@ -39,7 +32,7 @@ impl ListingTime {
 	}
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, IntoParams)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ListingQuery {
 	pub after: Option<String>,
@@ -51,8 +44,10 @@ pub struct ListingQuery {
 	#[param(inline)]
 	pub show: Option<ListingShow>,
 	#[param(rename = "t", inline)]
+	#[serde(rename = "t")]
 	pub time: Option<ListingTime>,
 	pub sr_detail: Option<bool>,
 	#[param(rename = "g")]
+	#[serde(rename = "g")]
 	pub geo_filter: Option<String>,
 }

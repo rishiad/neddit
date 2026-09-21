@@ -1,7 +1,6 @@
 use crate::api::docs::{INFO, SEARCH, TROPHIES, USER_DIRECTORIES, USER_HISTORY};
 use crate::api::error::ApiError;
-use crate::api::public_query::{info_query, search_query, user_history_query, user_search_query};
-use crate::api::query::listing_query;
+use crate::api::query::{info_query, listing_query, search_query, user_history_query, user_search_query};
 use crate::api::response::{respond, ErrorBody};
 use crate::models::{Listing, Post, PublicThing, Subreddit, Thing, TrophyList, User};
 use crate::service::{InfoQuery, ListingQuery, RedditService, SearchQuery, UserDirectorySort, UserHistoryQuery, UserSearchQuery};

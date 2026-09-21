@@ -1327,6 +1327,7 @@ dependencies = [
  "scraper",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sha2",
  "tegen",
  "thiserror 2.0.20",

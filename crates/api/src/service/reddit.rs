@@ -4,11 +4,11 @@ use crate::parsing::comments::parse_comments;
 use crate::parsing::posts::{parse_post_duplicates, parse_post_listing};
 use crate::parsing::subreddit::{parse_subreddit, parse_subreddit_listing};
 use crate::parsing::user::parse_user;
+use crate::service::query_codec;
 use crate::service::sanitize::{clear_listing_modhash, clear_post_comments_modhash};
 use crate::service::{CommentQuery, ContentPolicy, DuplicateQuery, ListingQuery, PostSort, ServiceError, SubredditSearchQuery, SubredditSort};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use url::form_urlencoded::Serializer;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -62,7 +62,7 @@ impl RedditService {
 	pub(crate) async fn recent_ql_comments(&self, community: &str, query: &ListingQuery) -> Result<Listing<crate::models::PublicThing>, ServiceError> {
 		validate_subreddit(community)?;
 		validate_listing_query(query)?;
-		let path = with_query(format!("/r/{community}/comments"), encode_listing_query(query, None));
+		let path = with_query(format!("/r/{community}/comments"), query_codec::encode(query));
 		let json = self.client.json(path).await?;
 		let mut listing = crate::parsing::public::parse_user_comment_listing(&json)?;
 		self.content.filter_public(&mut listing);
@@ -101,7 +101,7 @@ impl RedditService {
 		if let Some(subreddit) = &query.subreddit {
 			validate_subreddit(subreddit)?;
 		}
-		let path = with_query(format!("/duplicates/{article}"), encode_duplicate_query(query));
+		let path = with_query(format!("/duplicates/{article}"), query_codec::encode(query));
 		let json = self.client.json(path).await?;
 		let mut duplicates = parse_post_duplicates(&json)?;
 		clear_listing_modhash(&mut duplicates.0);
@@ -149,7 +149,7 @@ impl RedditService {
 
 	pub async fn subreddits(&self, sort: SubredditSort, query: &ListingQuery) -> Result<Listing<Thing<Subreddit>>, ServiceError> {
 		validate_listing_query(query)?;
-		let path = with_query(format!("/subreddits/{}", sort.as_str()), encode_listing_query(query, None));
+		let path = with_query(format!("/subreddits/{}", sort.as_str()), query_codec::encode(query));
 		let json = self.client.json(path).await?;
 		let mut listing = parse_subreddit_listing(&json)?;
 		clear_listing_modhash(&mut listing);
@@ -166,7 +166,7 @@ impl RedditService {
 		if !self.content.allows_nsfw() {
 			query.include_over_18 = Some(false);
 		}
-		let path = with_query("/subreddits/search".to_string(), encode_subreddit_search_query(&query));
+		let path = with_query("/subreddits/search".to_string(), query_codec::encode(&query));
 		let json = self.client.json(path).await?;
 		let mut listing = parse_subreddit_listing(&json)?;
 		clear_listing_modhash(&mut listing);
@@ -180,7 +180,7 @@ impl RedditService {
 			Some(subreddit) => format!("/r/{}/{}", subreddit.replace('+', "%2B"), sort.as_str()),
 			None => format!("/{}", sort.as_str()),
 		};
-		let path = with_query(base, encode_listing_query(query, None));
+		let path = with_query(base, query_codec::encode(query));
 		let json = self.client.json(path).await?;
 		let mut listing = parse_post_listing(&json)?;
 		clear_listing_modhash(&mut listing);
@@ -195,7 +195,7 @@ impl RedditService {
 			Some(subreddit) => format!("/r/{subreddit}/comments/{article}"),
 			None => format!("/comments/{article}"),
 		};
-		let path = with_query(base, encode_comment_query(query));
+		let path = with_query(base, query_codec::encode(query));
 		let json = self.client.json(path).await?;
 		let mut comments = parse_comments(&json)?;
 		clear_post_comments_modhash(&mut comments);
@@ -353,130 +353,5 @@ pub(super) fn invalid_parameter(parameter: &'static str, value: &str) -> Service
 	ServiceError::InvalidParameter {
 		parameter,
 		value: value.to_string(),
-	}
-}
-
-fn encode_listing_query(query: &ListingQuery, sort: Option<PostSort>) -> String {
-	let mut serializer = Serializer::new(String::new());
-	append_listing_query(&mut serializer, query);
-	if let Some(sort) = sort {
-		serializer.append_pair("sort", sort.as_str());
-	}
-	serializer.finish()
-}
-
-pub(super) fn append_listing_query(serializer: &mut Serializer<'_, String>, query: &ListingQuery) {
-	if let Some(after) = &query.after {
-		serializer.append_pair("after", after);
-	}
-	if let Some(before) = &query.before {
-		serializer.append_pair("before", before);
-	}
-	if let Some(limit) = query.limit {
-		serializer.append_pair("limit", &limit.to_string());
-	}
-	if let Some(count) = query.count {
-		serializer.append_pair("count", &count.to_string());
-	}
-	if let Some(show) = query.show {
-		serializer.append_pair("show", show.as_str());
-	}
-	if let Some(time) = query.time {
-		serializer.append_pair("t", time.as_str());
-	}
-	if let Some(sr_detail) = query.sr_detail {
-		serializer.append_pair("sr_detail", bool_string(sr_detail));
-	}
-	if let Some(geo_filter) = &query.geo_filter {
-		serializer.append_pair("g", geo_filter);
-	}
-}
-
-fn encode_duplicate_query(query: &DuplicateQuery) -> String {
-	let mut serializer = Serializer::new(String::new());
-	append_listing_query(&mut serializer, &query.listing);
-	if let Some(crossposts_only) = query.crossposts_only {
-		serializer.append_pair("crossposts_only", bool_string(crossposts_only));
-	}
-	if let Some(sort) = query.sort {
-		serializer.append_pair("sort", sort.as_str());
-	}
-	if let Some(subreddit) = &query.subreddit {
-		serializer.append_pair("sr", subreddit);
-	}
-	serializer.finish()
-}
-
-fn encode_subreddit_search_query(query: &SubredditSearchQuery) -> String {
-	let mut serializer = Serializer::new(String::new());
-	append_listing_query(&mut serializer, &query.listing);
-	serializer.append_pair("q", &query.query);
-	if let Some(search_query_id) = &query.search_query_id {
-		serializer.append_pair("search_query_id", search_query_id);
-	}
-	if let Some(show_users) = query.show_users {
-		serializer.append_pair("show_users", bool_string(show_users));
-	}
-	if let Some(include) = query.include_over_18 {
-		serializer.append_pair("include_over_18", if include { "on" } else { "off" });
-	}
-	if let Some(sort) = query.sort {
-		serializer.append_pair("sort", sort.as_str());
-	}
-	if let Some(typeahead_active) = query.typeahead_active {
-		serializer.append_pair("typeahead_active", typeahead_active.as_str());
-	}
-	serializer.finish()
-}
-
-fn encode_comment_query(query: &CommentQuery) -> String {
-	let mut serializer = Serializer::new(String::new());
-	if let Some(comment) = &query.comment {
-		serializer.append_pair("comment", comment);
-	}
-	if let Some(context) = query.context {
-		serializer.append_pair("context", &context.to_string());
-	}
-	if let Some(depth) = query.depth {
-		serializer.append_pair("depth", &depth.to_string());
-	}
-	if let Some(limit) = query.limit {
-		serializer.append_pair("limit", &limit.to_string());
-	}
-	if let Some(value) = query.showedits {
-		serializer.append_pair("showedits", bool_string(value));
-	}
-	if let Some(value) = query.showmedia {
-		serializer.append_pair("showmedia", bool_string(value));
-	}
-	if let Some(value) = query.showmore {
-		serializer.append_pair("showmore", bool_string(value));
-	}
-	if let Some(value) = query.showtitle {
-		serializer.append_pair("showtitle", bool_string(value));
-	}
-	if let Some(sort) = query.sort {
-		serializer.append_pair("sort", sort.as_str());
-	}
-	if let Some(value) = query.sr_detail {
-		serializer.append_pair("sr_detail", bool_string(value));
-	}
-	if let Some(theme) = query.theme {
-		serializer.append_pair("theme", theme.as_str());
-	}
-	if let Some(value) = query.threaded {
-		serializer.append_pair("threaded", bool_string(value));
-	}
-	if let Some(truncate) = query.truncate {
-		serializer.append_pair("truncate", &truncate.to_string());
-	}
-	serializer.finish()
-}
-
-pub(super) const fn bool_string(value: bool) -> &'static str {
-	if value {
-		"true"
-	} else {
-		"false"
 	}
 }

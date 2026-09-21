@@ -4,15 +4,15 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use thiserror::Error;
 
 use neddit_api::media::{DomainPolicy, DomainSet, MediaUrlError};
 use neddit_api::storage::{CacheConfig, ShortlinkConfig};
 use neddit_web::ImageDisplay;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
 	pub server: ServerConfig,
 	pub domains: DomainConfig,
@@ -23,8 +23,8 @@ pub struct Config {
 	pub shortlinks: ShortlinkConfig,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 #[allow(clippy::struct_excessive_bools)] // Independent flags mirror the flat server configuration.
 pub struct ServerConfig {
 	pub listen: String,
@@ -34,38 +34,37 @@ pub struct ServerConfig {
 	pub custom_feeds: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct DomainConfig {
 	pub navigation: Vec<String>,
 	pub shortlinks: Vec<String>,
 	pub media: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct MediaConfig {
 	pub image_display: ImageDisplay,
-	#[serde(default)]
 	pub signing_key_file: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct VideoConfig {
 	pub enabled: bool,
 	pub executable: PathBuf,
 	pub excluded_domains: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct LoggingConfig {
 	pub filter: String,
 	pub format: LogFormat,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum LogFormat {
 	#[default]
@@ -74,19 +73,21 @@ pub enum LogFormat {
 }
 
 impl Config {
-	/// Load the built-in defaults and merge an optional TOML file over them.
+	/// Load the built-in defaults and apply an optional TOML file.
 	///
 	/// # Errors
 	///
 	/// Returns an error when the file cannot be read, parsed, or validated.
 	pub fn load(path: Option<&Path>) -> Result<Self, ConfigError> {
-		let mut document = defaults_document()?;
-		if let Some(path) = path {
+		let config = if let Some(path) = path {
 			let source = fs::read_to_string(path).map_err(|source| ConfigError::Read { path: path.to_owned(), source })?;
-			let overrides = parse(&source, &path.display().to_string())?;
-			merge(&mut document, overrides);
-		}
-		let config: Self = document.try_into().map_err(|source| ConfigError::Invalid { source })?;
+			toml::from_str(&source).map_err(|source| ConfigError::Parse {
+				name: path.display().to_string(),
+				source,
+			})?
+		} else {
+			Self::default()
+		};
 		config.validate()?;
 		Ok(config)
 	}
@@ -143,60 +144,43 @@ impl Config {
 	}
 }
 
-impl Default for Config {
+impl Default for ServerConfig {
 	fn default() -> Self {
 		Self {
-			server: ServerConfig {
-				listen: "[::]:8080".into(),
-				web: true,
-				api: true,
-				allow_nsfw: true,
-				custom_feeds: true,
-			},
-			domains: DomainConfig {
-				navigation: Vec::new(),
-				shortlinks: Vec::new(),
-				media: Vec::new(),
-			},
-			media: MediaConfig {
-				image_display: ImageDisplay::Link,
-				signing_key_file: None,
-			},
-			video: VideoConfig {
-				enabled: false,
-				executable: "yt-dlp".into(),
-				excluded_domains: Vec::new(),
-			},
-			logging: LoggingConfig {
-				filter: "info".into(),
-				format: LogFormat::Compact,
-			},
-			cache: CacheConfig::default(),
-			shortlinks: ShortlinkConfig::default(),
+			listen: "[::]:8080".into(),
+			web: true,
+			api: true,
+			allow_nsfw: true,
+			custom_feeds: true,
 		}
 	}
 }
 
-fn defaults_document() -> Result<toml::Value, ConfigError> {
-	toml::Value::try_from(Config::default()).map_err(ConfigError::Defaults)
-}
-
-fn parse(source: &str, name: &str) -> Result<toml::Value, ConfigError> {
-	toml::from_str(source).map_err(|source| ConfigError::Parse { name: name.to_owned(), source })
-}
-
-fn merge(base: &mut toml::Value, overrides: toml::Value) {
-	match (base, overrides) {
-		(toml::Value::Table(base), toml::Value::Table(overrides)) => {
-			for (key, value) in overrides {
-				if let Some(base) = base.get_mut(&key) {
-					merge(base, value);
-				} else {
-					base.insert(key, value);
-				}
-			}
+impl Default for MediaConfig {
+	fn default() -> Self {
+		Self {
+			image_display: ImageDisplay::Link,
+			signing_key_file: None,
 		}
-		(base, value) => *base = value,
+	}
+}
+
+impl Default for VideoConfig {
+	fn default() -> Self {
+		Self {
+			enabled: false,
+			executable: "yt-dlp".into(),
+			excluded_domains: Vec::new(),
+		}
+	}
+}
+
+impl Default for LoggingConfig {
+	fn default() -> Self {
+		Self {
+			filter: "info".into(),
+			format: LogFormat::Compact,
+		}
 	}
 }
 
@@ -204,8 +188,6 @@ fn merge(base: &mut toml::Value, overrides: toml::Value) {
 pub enum ConfigError {
 	#[error("{0}")]
 	Storage(&'static str),
-	#[error("failed to construct built-in configuration defaults")]
-	Defaults(#[source] toml::ser::Error),
 	#[error("failed to read configuration file `{}`", path.display())]
 	Read {
 		path: PathBuf,
@@ -215,11 +197,6 @@ pub enum ConfigError {
 	#[error("failed to parse {name}")]
 	Parse {
 		name: String,
-		#[source]
-		source: toml::de::Error,
-	},
-	#[error("invalid configuration")]
-	Invalid {
 		#[source]
 		source: toml::de::Error,
 	},

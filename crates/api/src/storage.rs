@@ -1,6 +1,6 @@
 //! Local SQLite stores. Each bounded queue owns one database thread.
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
 	path::PathBuf,
@@ -164,7 +164,7 @@ impl Flights {
 	}
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CacheConfig {
 	pub path: PathBuf,
@@ -291,7 +291,7 @@ impl Cache {
 	}
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ShortlinkConfig {
 	pub enabled: bool,

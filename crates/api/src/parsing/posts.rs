@@ -1,13 +1,9 @@
 use crate::models::{Listing, Post, PostDuplicates, Thing};
 use crate::parsing::error::ParseError;
 use crate::parsing::listing::{parse_listing, validate_listing_kind};
-use crate::parsing::thing::{parse_thing, validate_thing_kind};
+use crate::parsing::thing::validate_thing_kind;
 use serde::Deserialize;
 use serde_json::Value;
-
-pub fn parse_post(json: &Value) -> Result<Thing<Post>, ParseError> {
-	parse_thing(json, "t3", "post")
-}
 
 pub fn parse_post_listing(json: &Value) -> Result<Listing<Thing<Post>>, ParseError> {
 	let listing = parse_listing(json)?;

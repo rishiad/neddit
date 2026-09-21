@@ -3,7 +3,6 @@ use crate::api::error::ApiError;
 use crate::api::public_query::{info_query, search_query, user_history_query, user_search_query};
 use crate::api::query::listing_query;
 use crate::api::response::{respond, ErrorBody};
-use crate::client::Access;
 use crate::models::{Listing, Post, PublicThing, Subreddit, Thing, TrophyList, User};
 use crate::service::{InfoQuery, ListingQuery, RedditService, SearchQuery, UserDirectorySort, UserHistoryQuery, UserSearchQuery};
 use axum::{
@@ -47,7 +46,7 @@ async fn user_overview_default(state: State<RedditService>, path: Path<String>, 
 async fn search(State(service): State<RedditService>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = search_query(raw_query.as_deref())?;
-		service.search(&query, Access::Standard).await.map_err(ApiError::from)
+		service.search(&query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -67,7 +66,7 @@ async fn search(State(service): State<RedditService>, RawQuery(raw_query): RawQu
 async fn search_subreddit(State(service): State<RedditService>, Path(subreddit): Path<String>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = search_query(raw_query.as_deref())?;
-		service.search_subreddit(&subreddit, &query, Access::Standard).await.map_err(ApiError::from)
+		service.search_subreddit(&subreddit, &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -86,7 +85,7 @@ async fn search_subreddit(State(service): State<RedditService>, Path(subreddit):
 )]
 async fn info(State(service): State<RedditService>, RawQuery(raw_query): RawQuery) -> Response {
 	let query = info_query(raw_query.as_deref());
-	respond(service.info(&query, Access::Standard).await.map_err(ApiError::from))
+	respond(service.info(&query).await.map_err(ApiError::from))
 }
 
 #[utoipa::path(
@@ -102,7 +101,7 @@ async fn info(State(service): State<RedditService>, RawQuery(raw_query): RawQuer
 )]
 async fn subreddit_info(State(service): State<RedditService>, Path(subreddit): Path<String>, RawQuery(raw_query): RawQuery) -> Response {
 	let query = info_query(raw_query.as_deref());
-	respond(service.subreddit_info(&subreddit, &query, Access::Standard).await.map_err(ApiError::from))
+	respond(service.subreddit_info(&subreddit, &query).await.map_err(ApiError::from))
 }
 
 #[utoipa::path(
@@ -128,7 +127,7 @@ async fn subreddit_info(State(service): State<RedditService>, Path(subreddit): P
 async fn user_overview(State(service): State<RedditService>, Path(username): Path<String>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = user_history_query(raw_query.as_deref())?;
-		service.user_overview(&username, &query, Access::Standard).await.map_err(ApiError::from)
+		service.user_overview(&username, &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -157,7 +156,7 @@ async fn user_overview(State(service): State<RedditService>, Path(username): Pat
 async fn user_submitted(State(service): State<RedditService>, Path(username): Path<String>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = user_history_query(raw_query.as_deref())?;
-		service.user_submitted(&username, &query, Access::Standard).await.map_err(ApiError::from)
+		service.user_submitted(&username, &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -186,7 +185,7 @@ async fn user_submitted(State(service): State<RedditService>, Path(username): Pa
 async fn user_comments(State(service): State<RedditService>, Path(username): Path<String>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = user_history_query(raw_query.as_deref())?;
-		service.user_comments(&username, &query, Access::Standard).await.map_err(ApiError::from)
+		service.user_comments(&username, &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -204,7 +203,7 @@ async fn user_comments(State(service): State<RedditService>, Path(username): Pat
 	tag = "users"
 )]
 async fn user_trophies(State(service): State<RedditService>, Path(username): Path<String>) -> Response {
-	respond(service.user_trophies(&username, Access::Standard).await.map_err(ApiError::from))
+	respond(service.user_trophies(&username).await.map_err(ApiError::from))
 }
 
 #[utoipa::path(
@@ -240,7 +239,7 @@ async fn users_popular(state: State<RedditService>, query: RawQuery) -> Response
 async fn users(State(service): State<RedditService>, RawQuery(raw_query): RawQuery, sort: UserDirectorySort) -> Response {
 	let result = async {
 		let query = listing_query(raw_query.as_deref())?;
-		service.users(sort, &query, Access::Standard).await.map_err(ApiError::from)
+		service.users(sort, &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -260,7 +259,7 @@ async fn users(State(service): State<RedditService>, RawQuery(raw_query): RawQue
 async fn search_users(State(service): State<RedditService>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = user_search_query(raw_query.as_deref())?;
-		service.search_users(&query, Access::Standard).await.map_err(ApiError::from)
+		service.search_users(&query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)

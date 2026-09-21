@@ -2,7 +2,6 @@ use crate::api::docs::{COMMENTS, LISTINGS, MORE_CHILDREN, SUBREDDITS, SUBREDDIT_
 use crate::api::error::ApiError;
 use crate::api::query::{comment_query, duplicate_query, listing_query, more_children_query, subreddit_search_query, wiki_page_query};
 use crate::api::response::{respond, ErrorBody};
-use crate::client::Access;
 use crate::models::{Listing, MoreChildren, Post, PostComments, Sidebar, Subreddit, SubredditRules, Thing, User, WikiPage, WikiPageListing, WikiRevision};
 use crate::service::{CommentQuery, DuplicateQuery, ListingQuery, MoreChildrenQuery, PostSort, RedditService, SubredditSearchQuery, SubredditSort, WikiPageQuery};
 use axum::{
@@ -188,7 +187,7 @@ async fn subreddit_default(state: State<RedditService>, path: Path<String>, quer
 async fn more_children(State(service): State<RedditService>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = more_children_query(raw_query.as_deref())?;
-		service.more_children(&query, Access::Standard).await.map_err(ApiError::from)
+		service.more_children(&query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -197,7 +196,7 @@ async fn more_children(State(service): State<RedditService>, RawQuery(raw_query)
 async fn front_page(State(service): State<RedditService>, RawQuery(raw_query): RawQuery, sort: PostSort) -> Response {
 	let result = async {
 		let query = listing_query(raw_query.as_deref())?;
-		service.front_page_posts(sort, &query, Access::Standard).await.map_err(ApiError::from)
+		service.front_page_posts(sort, &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -206,7 +205,7 @@ async fn front_page(State(service): State<RedditService>, RawQuery(raw_query): R
 async fn subreddit(State(service): State<RedditService>, Path(subreddit): Path<String>, RawQuery(raw_query): RawQuery, sort: PostSort) -> Response {
 	let result = async {
 		let query = listing_query(raw_query.as_deref())?;
-		service.subreddit_posts(&subreddit, sort, &query, Access::Standard).await.map_err(ApiError::from)
+		service.subreddit_posts(&subreddit, sort, &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -277,11 +276,8 @@ async fn comments(service: RedditService, subreddit: Option<String>, article: St
 			query.comment = comment;
 		}
 		match subreddit {
-			Some(subreddit) => service
-				.subreddit_post_comments(&subreddit, &article, &query, Access::Standard)
-				.await
-				.map_err(ApiError::from),
-			None => service.post_comments(&article, &query, Access::Standard).await.map_err(ApiError::from),
+			Some(subreddit) => service.subreddit_post_comments(&subreddit, &article, &query).await.map_err(ApiError::from),
+			None => service.post_comments(&article, &query).await.map_err(ApiError::from),
 		}
 	}
 	.await;
@@ -300,7 +296,7 @@ async fn comments(service: RedditService, subreddit: Option<String>, article: St
 	tag = "subreddits"
 )]
 async fn subreddit_about(State(service): State<RedditService>, Path(subreddit): Path<String>) -> Response {
-	respond(service.subreddit_about(&subreddit, Access::Standard).await.map_err(ApiError::from))
+	respond(service.subreddit_about(&subreddit).await.map_err(ApiError::from))
 }
 
 #[utoipa::path(
@@ -315,7 +311,7 @@ async fn subreddit_about(State(service): State<RedditService>, Path(subreddit): 
 	tag = "subreddits"
 )]
 async fn subreddit_rules(State(service): State<RedditService>, Path(subreddit): Path<String>) -> Response {
-	respond(service.subreddit_rules(&subreddit, Access::Standard).await.map_err(ApiError::from))
+	respond(service.subreddit_rules(&subreddit).await.map_err(ApiError::from))
 }
 
 #[utoipa::path(
@@ -330,7 +326,7 @@ async fn subreddit_rules(State(service): State<RedditService>, Path(subreddit): 
 	tag = "subreddits"
 )]
 async fn subreddit_sidebar(State(service): State<RedditService>, Path(subreddit): Path<String>) -> Response {
-	respond(service.subreddit_sidebar(&subreddit, Access::Standard).await.map_err(ApiError::from))
+	respond(service.subreddit_sidebar(&subreddit).await.map_err(ApiError::from))
 }
 
 #[utoipa::path(
@@ -345,7 +341,7 @@ async fn subreddit_sidebar(State(service): State<RedditService>, Path(subreddit)
 	tag = "wiki"
 )]
 async fn wiki_pages(State(service): State<RedditService>, Path(subreddit): Path<String>) -> Response {
-	respond(service.wiki_pages(&subreddit, Access::Standard).await.map_err(ApiError::from))
+	respond(service.wiki_pages(&subreddit).await.map_err(ApiError::from))
 }
 
 #[utoipa::path(
@@ -360,21 +356,11 @@ async fn wiki_pages(State(service): State<RedditService>, Path(subreddit): Path<
 	tag = "wiki"
 )]
 pub(super) async fn wiki_page(State(service): State<RedditService>, Path((subreddit, page)): Path<(String, String)>, RawQuery(raw_query): RawQuery) -> Response {
-	respond(
-		service
-			.wiki_page(&subreddit, &page, &wiki_page_query(raw_query.as_deref()), Access::Standard)
-			.await
-			.map_err(ApiError::from),
-	)
+	respond(service.wiki_page(&subreddit, &page, &wiki_page_query(raw_query.as_deref())).await.map_err(ApiError::from))
 }
 
 async fn wiki_index(State(service): State<RedditService>, Path(subreddit): Path<String>, RawQuery(raw_query): RawQuery) -> Response {
-	respond(
-		service
-			.wiki_page(&subreddit, "index", &wiki_page_query(raw_query.as_deref()), Access::Standard)
-			.await
-			.map_err(ApiError::from),
-	)
+	respond(service.wiki_page(&subreddit, "index", &wiki_page_query(raw_query.as_deref())).await.map_err(ApiError::from))
 }
 
 #[utoipa::path(
@@ -391,7 +377,7 @@ async fn wiki_index(State(service): State<RedditService>, Path(subreddit): Path<
 async fn wiki_revisions(State(service): State<RedditService>, Path(subreddit): Path<String>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = listing_query(raw_query.as_deref())?;
-		service.wiki_revisions(&subreddit, None, &query, Access::Standard).await.map_err(ApiError::from)
+		service.wiki_revisions(&subreddit, None, &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -411,7 +397,7 @@ async fn wiki_revisions(State(service): State<RedditService>, Path(subreddit): P
 pub(super) async fn wiki_page_revisions(State(service): State<RedditService>, Path((subreddit, page)): Path<(String, String)>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = listing_query(raw_query.as_deref())?;
-		service.wiki_revisions(&subreddit, Some(&page), &query, Access::Standard).await.map_err(ApiError::from)
+		service.wiki_revisions(&subreddit, Some(&page), &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -431,7 +417,7 @@ pub(super) async fn wiki_page_revisions(State(service): State<RedditService>, Pa
 pub(super) async fn wiki_discussions(State(service): State<RedditService>, Path((subreddit, page)): Path<(String, String)>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = listing_query(raw_query.as_deref())?;
-		service.wiki_discussions(&subreddit, &page, &query, Access::Standard).await.map_err(ApiError::from)
+		service.wiki_discussions(&subreddit, &page, &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -449,7 +435,7 @@ pub(super) async fn wiki_discussions(State(service): State<RedditService>, Path(
 	tag = "users"
 )]
 async fn user_about(State(service): State<RedditService>, Path(username): Path<String>) -> Response {
-	respond(service.user_about(&username, Access::Standard).await.map_err(ApiError::from))
+	respond(service.user_about(&username).await.map_err(ApiError::from))
 }
 
 #[utoipa::path(
@@ -464,7 +450,7 @@ async fn user_about(State(service): State<RedditService>, Path(username): Path<S
 	tag = "listings"
 )]
 async fn posts_by_id(State(service): State<RedditService>, Path(names): Path<String>) -> Response {
-	respond(service.posts_by_id(&names, Access::Standard).await.map_err(ApiError::from))
+	respond(service.posts_by_id(&names).await.map_err(ApiError::from))
 }
 
 #[utoipa::path(
@@ -481,7 +467,7 @@ async fn posts_by_id(State(service): State<RedditService>, Path(names): Path<Str
 async fn post_duplicates(State(service): State<RedditService>, Path(article): Path<String>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = duplicate_query(raw_query.as_deref())?;
-		service.post_duplicates(&article, &query, Access::Standard).await.map_err(ApiError::from)
+		service.post_duplicates(&article, &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -490,7 +476,7 @@ async fn post_duplicates(State(service): State<RedditService>, Path(article): Pa
 async fn subreddits(State(service): State<RedditService>, RawQuery(raw_query): RawQuery, sort: SubredditSort) -> Response {
 	let result = async {
 		let query = listing_query(raw_query.as_deref())?;
-		service.subreddits(sort, &query, Access::Standard).await.map_err(ApiError::from)
+		service.subreddits(sort, &query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)
@@ -510,7 +496,7 @@ async fn subreddits(State(service): State<RedditService>, RawQuery(raw_query): R
 async fn search_subreddits(State(service): State<RedditService>, RawQuery(raw_query): RawQuery) -> Response {
 	let result = async {
 		let query = subreddit_search_query(raw_query.as_deref())?;
-		service.search_subreddits(&query, Access::Standard).await.map_err(ApiError::from)
+		service.search_subreddits(&query).await.map_err(ApiError::from)
 	}
 	.await;
 	respond(result)

@@ -3,7 +3,6 @@ use axum::{
 	response::{IntoResponse, Redirect, Response},
 };
 use neddit_api::{
-	client::Access,
 	media::MediaSigner,
 	models::{PostComments, PublicThing},
 	server::MediaProxy,
@@ -90,7 +89,6 @@ pub async fn front_page(
 				time,
 				..ListingQuery::default()
 			},
-			Access::Standard,
 		)
 		.await?;
 	let before = listing
@@ -130,10 +128,7 @@ pub async fn subreddit_feed(
 		time,
 		..ListingQuery::default()
 	};
-	let (listing, community) = tokio::try_join!(
-		service.subreddit_posts(&subreddit, sort, &listing_query, Access::Standard),
-		service.subreddit_about(&subreddit, Access::Standard),
-	)?;
+	let (listing, community) = tokio::try_join!(service.subreddit_posts(&subreddit, sort, &listing_query), service.subreddit_about(&subreddit),)?;
 	let before = listing
 		.data
 		.before
@@ -149,7 +144,7 @@ pub async fn subreddit_feed(
 		.collect();
 
 	let has_wiki = if community.data.wiki_enabled == Some(true) {
-		service.wiki_pages(&subreddit, Access::Standard).await.is_ok_and(|pages| has_public_wiki_pages(&pages))
+		service.wiki_pages(&subreddit).await.is_ok_and(|pages| has_public_wiki_pages(&pages))
 	} else {
 		false
 	};
@@ -220,10 +215,7 @@ async fn user_page(
 		sort: Some(sort),
 		..UserHistoryQuery::default()
 	};
-	let (activity, user) = tokio::try_join!(
-		user_activity(&service, &signer, &username, &history_query, section),
-		service.user_about(&username, Access::Standard),
-	)?;
+	let (activity, user) = tokio::try_join!(user_activity(&service, &signer, &username, &history_query, section), service.user_about(&username),)?;
 	let posts_url = format!("/user/{username}");
 	let comments_url = format!("/user/{username}/comments");
 	let (base, posts_active, comments_active) = match section {
@@ -254,7 +246,7 @@ async fn user_activity(
 ) -> Result<UserActivityPage, ServiceError> {
 	match section {
 		UserSection::Posts => {
-			let listing = service.user_submitted(username, query, Access::Standard).await?;
+			let listing = service.user_submitted(username, query).await?;
 			let before = listing.data.before.clone().or_else(|| listing.data.children.first().map(|thing| thing.data.name.clone()));
 			let results = listing.data.children.iter().map(|thing| post_result(&thing.data, signer)).collect();
 			Ok(UserActivityPage {
@@ -264,7 +256,7 @@ async fn user_activity(
 			})
 		}
 		UserSection::Comments => {
-			let listing = service.user_comments(username, query, Access::Standard).await?;
+			let listing = service.user_comments(username, query).await?;
 			let before = listing
 				.data
 				.before
@@ -325,7 +317,7 @@ async fn wiki_response(
 	query: WikiQuery,
 ) -> Result<Response, AppError> {
 	let query = WikiPageQuery { v: query.v, v2: query.v2 };
-	let (community, pages) = tokio::try_join!(service.subreddit_about(&subreddit, Access::Standard), service.wiki_pages(&subreddit, Access::Standard),)?;
+	let (community, pages) = tokio::try_join!(service.subreddit_about(&subreddit), service.wiki_pages(&subreddit),)?;
 	let has_wiki = has_public_wiki_pages(&pages);
 	let community = community_view(&community.data, &signer, image_display, has_wiki);
 	let requested_page = requested_page.map(|page| page.trim_end_matches('/').to_owned());
@@ -352,7 +344,7 @@ async fn wiki_response(
 		return Ok(crate::error::response(axum::http::StatusCode::NOT_FOUND));
 	}
 
-	let wiki = service.wiki_page(&subreddit, &page, &query, Access::Standard).await?;
+	let wiki = service.wiki_page(&subreddit, &page, &query).await?;
 
 	Ok(
 		WikiTemplate {
@@ -528,16 +520,13 @@ pub async fn more_comments(
 		Vec::new()
 	};
 	let response = service
-		.more_children(
-			&MoreChildrenQuery {
-				children,
-				link_id: query.link_id.clone(),
-				limit_children: Some(false),
-				sort: Some(sort),
-				..MoreChildrenQuery::default()
-			},
-			Access::Standard,
-		)
+		.more_children(&MoreChildrenQuery {
+			children,
+			link_id: query.link_id.clone(),
+			limit_children: Some(false),
+			sort: Some(sort),
+			..MoreChildrenQuery::default()
+		})
 		.await?;
 
 	Ok(MoreCommentsTemplate {
@@ -558,7 +547,7 @@ pub async fn video_player(
 	Query(query): Query<VideoPlayerQuery>,
 ) -> Result<VideoPlayerTemplate, AppError> {
 	let post = service
-		.posts_by_id(&format!("t3_{}", query.id), Access::Standard)
+		.posts_by_id(&format!("t3_{}", query.id))
 		.await?
 		.data
 		.children
@@ -581,7 +570,7 @@ pub async fn gallery(
 	Path((article, index)): Path<(String, usize)>,
 ) -> Result<GalleryTemplate, AppError> {
 	let post = service
-		.posts_by_id(&format!("t3_{article}"), Access::Standard)
+		.posts_by_id(&format!("t3_{article}"))
 		.await?
 		.data
 		.children
@@ -602,7 +591,7 @@ pub async fn post_content(
 	Path(article): Path<String>,
 ) -> Result<PostContentTemplate, AppError> {
 	let post = service
-		.posts_by_id(&format!("t3_{article}"), Access::Standard)
+		.posts_by_id(&format!("t3_{article}"))
 		.await?
 		.data
 		.children
@@ -637,7 +626,7 @@ async fn post_page(
 	};
 	let (post, comment_tree, result_count) = if let Some(search) = &search {
 		let post = service
-			.posts_by_id(&format!("t3_{article}"), Access::Standard)
+			.posts_by_id(&format!("t3_{article}"))
 			.await?
 			.data
 			.children
@@ -646,14 +635,14 @@ async fn post_page(
 			.ok_or(AppError::PostNotFound)?
 			.data;
 		let comments = service
-			.search_post_comments(&post.subreddit, &article, &ThreadCommentSearchQuery { query: search.clone(), sort }, Access::Standard)
+			.search_post_comments(&post.subreddit, &article, &ThreadCommentSearchQuery { query: search.clone(), sort })
 			.await?;
 		let count = comments.len();
 		(post, search_comment_tree(&comments, renderer), count)
 	} else {
 		let PostComments(posts, comments) = match subreddit {
-			Some(subreddit) => service.subreddit_post_comments(&subreddit, &article, &comment_query, Access::Standard).await?,
-			None => service.post_comments(&article, &comment_query, Access::Standard).await?,
+			Some(subreddit) => service.subreddit_post_comments(&subreddit, &article, &comment_query).await?,
+			None => service.post_comments(&article, &comment_query).await?,
 		};
 		let post = posts.data.children.into_iter().next().ok_or(AppError::PostNotFound)?.data;
 		let link_id = post.name.clone();

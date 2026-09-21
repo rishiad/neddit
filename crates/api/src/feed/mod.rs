@@ -4,7 +4,6 @@ mod shortlinks;
 pub use shortlinks::{status, Continuation, Definition, SavedFeed};
 
 use crate::{
-	client::Access,
 	models::{Listing, Post, Thing},
 	search::{parse, post_record, Diagnostic, Expr, Field, Mode, Node, Truth, Value, TEXT_PROFILE},
 	service::{ListingQuery, ListingTime, PostSort, RedditService, ServiceError, UserHistoryQuery, UserHistorySort},
@@ -377,7 +376,6 @@ impl CandidateSource for RedditService {
 							sort: Some(pool.user_sort()),
 							..Default::default()
 						},
-						Access::Standard,
 					)
 					.await
 			}

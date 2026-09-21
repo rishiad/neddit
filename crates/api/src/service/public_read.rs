@@ -1,4 +1,3 @@
-use crate::client::Access;
 use crate::models::{Listing, Post, PublicThing, Subreddit, Thing, TrophyList, User};
 
 use crate::parsing::posts::parse_post_listing;
@@ -12,86 +11,86 @@ use url::{form_urlencoded::Serializer, Url};
 use uuid::Uuid;
 
 impl RedditService {
-	pub async fn search(&self, query: &SearchQuery, access: Access) -> Result<Listing<PublicThing>, ServiceError> {
-		self.search_listing(None, query, access).await
+	pub async fn search(&self, query: &SearchQuery) -> Result<Listing<PublicThing>, ServiceError> {
+		self.search_listing(None, query).await
 	}
 
-	pub async fn search_subreddit(&self, subreddit: &str, query: &SearchQuery, access: Access) -> Result<Listing<PublicThing>, ServiceError> {
+	pub async fn search_subreddit(&self, subreddit: &str, query: &SearchQuery) -> Result<Listing<PublicThing>, ServiceError> {
 		validate_subreddit(subreddit)?;
-		self.require_safe_subreddit(subreddit, access).await?;
-		self.search_listing(Some(subreddit), query, access).await
+		self.require_safe_subreddit(subreddit).await?;
+		self.search_listing(Some(subreddit), query).await
 	}
 
-	pub async fn info(&self, query: &InfoQuery, access: Access) -> Result<Listing<PublicThing>, ServiceError> {
-		self.info_listing(None, query, access).await
+	pub async fn info(&self, query: &InfoQuery) -> Result<Listing<PublicThing>, ServiceError> {
+		self.info_listing(None, query).await
 	}
 
-	pub async fn subreddit_info(&self, subreddit: &str, query: &InfoQuery, access: Access) -> Result<Listing<PublicThing>, ServiceError> {
+	pub async fn subreddit_info(&self, subreddit: &str, query: &InfoQuery) -> Result<Listing<PublicThing>, ServiceError> {
 		validate_subreddit(subreddit)?;
-		self.require_safe_subreddit(subreddit, access).await?;
-		self.info_listing(Some(subreddit), query, access).await
+		self.require_safe_subreddit(subreddit).await?;
+		self.info_listing(Some(subreddit), query).await
 	}
 
-	pub async fn user_overview(&self, username: &str, query: &UserHistoryQuery, access: Access) -> Result<Listing<PublicThing>, ServiceError> {
+	pub async fn user_overview(&self, username: &str, query: &UserHistoryQuery) -> Result<Listing<PublicThing>, ServiceError> {
 		validate_username(username)?;
 		validate_user_history_query(query)?;
 		let path = with_query(format!("/user/{username}/overview"), encode_user_history_query(query));
-		let json = self.client.json(path, access).await?;
+		let json = self.client.json(path).await?;
 		let mut listing = parse_user_overview_listing(&json)?;
 		clear_public_listing_modhash(&mut listing);
 		self.content.filter_public(&mut listing);
 		Ok(listing)
 	}
 
-	pub async fn user_submitted(&self, username: &str, query: &UserHistoryQuery, access: Access) -> Result<Listing<Thing<Post>>, ServiceError> {
+	pub async fn user_submitted(&self, username: &str, query: &UserHistoryQuery) -> Result<Listing<Thing<Post>>, ServiceError> {
 		validate_username(username)?;
 		validate_user_history_query(query)?;
 		let path = with_query(format!("/user/{username}/submitted"), encode_user_history_query(query));
-		let json = self.client.json(path, access).await?;
+		let json = self.client.json(path).await?;
 		let mut listing = parse_post_listing(&json)?;
 		clear_listing_modhash(&mut listing);
 		self.content.filter_posts(&mut listing);
 		Ok(listing)
 	}
 
-	pub async fn user_comments(&self, username: &str, query: &UserHistoryQuery, access: Access) -> Result<Listing<PublicThing>, ServiceError> {
+	pub async fn user_comments(&self, username: &str, query: &UserHistoryQuery) -> Result<Listing<PublicThing>, ServiceError> {
 		validate_username(username)?;
 		validate_user_history_query(query)?;
 		let path = with_query(format!("/user/{username}/comments"), encode_user_history_query(query));
-		let json = self.client.json(path, access).await?;
+		let json = self.client.json(path).await?;
 		let mut listing = parse_user_comment_listing(&json)?;
 		clear_public_listing_modhash(&mut listing);
 		self.content.filter_public(&mut listing);
 		Ok(listing)
 	}
 
-	pub async fn user_trophies(&self, username: &str, access: Access) -> Result<TrophyList, ServiceError> {
+	pub async fn user_trophies(&self, username: &str) -> Result<TrophyList, ServiceError> {
 		validate_username(username)?;
-		let json = self.client.json(format!("/api/v1/user/{username}/trophies"), access).await?;
+		let json = self.client.json(format!("/api/v1/user/{username}/trophies")).await?;
 		Ok(parse_trophy_list(&json)?)
 	}
 
-	pub async fn users(&self, sort: UserDirectorySort, query: &crate::service::ListingQuery, access: Access) -> Result<Listing<Thing<Subreddit>>, ServiceError> {
+	pub async fn users(&self, sort: UserDirectorySort, query: &crate::service::ListingQuery) -> Result<Listing<Thing<Subreddit>>, ServiceError> {
 		validate_listing_query(query)?;
 		let path = with_query(format!("/users/{}", sort.as_str()), encode_listing_query(query));
-		let json = self.client.json(path, access).await?;
+		let json = self.client.json(path).await?;
 		let mut listing = parse_subreddit_listing(&json)?;
 		clear_listing_modhash(&mut listing);
 		self.content.filter_subreddits(&mut listing);
 		Ok(listing)
 	}
 
-	pub async fn search_users(&self, query: &UserSearchQuery, access: Access) -> Result<Listing<Thing<User>>, ServiceError> {
+	pub async fn search_users(&self, query: &UserSearchQuery) -> Result<Listing<Thing<User>>, ServiceError> {
 		validate_user_search_query(query)?;
 		let path = with_query("/users/search".to_string(), encode_user_search_query(query));
-		let json = self.client.json(path, access).await?;
+		let json = self.client.json(path).await?;
 		let mut listing = parse_user_listing(&json)?;
 		clear_listing_modhash(&mut listing);
 		self.content.filter_users(&mut listing);
 		Ok(listing)
 	}
 
-	async fn search_listing(&self, subreddit: Option<&str>, query: &SearchQuery, access: Access) -> Result<Listing<PublicThing>, ServiceError> {
+	async fn search_listing(&self, subreddit: Option<&str>, query: &SearchQuery) -> Result<Listing<PublicThing>, ServiceError> {
 		validate_search_query(query)?;
 		if !self.content.allows_nsfw() && query.include_over_18 == Some(true) {
 			return Err(ServiceError::ContentBlocked);
@@ -104,20 +103,20 @@ impl RedditService {
 			Some(subreddit) => format!("/r/{subreddit}/search"),
 			None => "/search".to_string(),
 		};
-		let json = self.client.json(with_query(base, encode_search_query(&query)), access).await?;
+		let json = self.client.json(with_query(base, encode_search_query(&query))).await?;
 		let mut listing = parse_search_listing(&json)?;
 		clear_listing_modhash(&mut listing);
 		self.content.filter_public(&mut listing);
 		Ok(listing)
 	}
 
-	async fn info_listing(&self, subreddit: Option<&str>, query: &InfoQuery, access: Access) -> Result<Listing<PublicThing>, ServiceError> {
+	async fn info_listing(&self, subreddit: Option<&str>, query: &InfoQuery) -> Result<Listing<PublicThing>, ServiceError> {
 		validate_info_query(query)?;
 		let base = match subreddit {
 			Some(subreddit) => format!("/r/{subreddit}/api/info"),
 			None => "/api/info".to_string(),
 		};
-		let json = self.client.json(with_query(base, encode_info_query(query)), access).await?;
+		let json = self.client.json(with_query(base, encode_info_query(query))).await?;
 		let mut listing = parse_info_listing(&json)?;
 		clear_public_listing_modhash(&mut listing);
 		self.content.filter_public(&mut listing);

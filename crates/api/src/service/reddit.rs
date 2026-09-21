@@ -1,4 +1,4 @@
-use crate::client::{Access, RedditClient};
+use crate::client::RedditClient;
 use crate::models::{Listing, Post, PostComments, PostDuplicates, Subreddit, Thing, User};
 use crate::parsing::comments::parse_comments;
 use crate::parsing::posts::{parse_post_duplicates, parse_post_listing};
@@ -55,27 +55,27 @@ impl RedditService {
 		self.content.allows_nsfw()
 	}
 
-	pub async fn front_page_posts(&self, sort: PostSort, query: &ListingQuery, access: Access) -> Result<Listing<Thing<Post>>, ServiceError> {
-		self.post_listing(None, sort, query, access).await
+	pub async fn front_page_posts(&self, sort: PostSort, query: &ListingQuery) -> Result<Listing<Thing<Post>>, ServiceError> {
+		self.post_listing(None, sort, query).await
 	}
 
 	pub(crate) async fn recent_ql_comments(&self, community: &str, query: &ListingQuery) -> Result<Listing<crate::models::PublicThing>, ServiceError> {
 		validate_subreddit(community)?;
 		validate_listing_query(query)?;
 		let path = with_query(format!("/r/{community}/comments"), encode_listing_query(query, None));
-		let json = self.client.json(path, Access::Standard).await?;
+		let json = self.client.json(path).await?;
 		let mut listing = crate::parsing::public::parse_user_comment_listing(&json)?;
 		self.content.filter_public(&mut listing);
 		Ok(listing)
 	}
 
-	pub async fn subreddit_posts(&self, subreddit: &str, sort: PostSort, query: &ListingQuery, access: Access) -> Result<Listing<Thing<Post>>, ServiceError> {
+	pub async fn subreddit_posts(&self, subreddit: &str, sort: PostSort, query: &ListingQuery) -> Result<Listing<Thing<Post>>, ServiceError> {
 		validate_subreddit(subreddit)?;
-		self.require_safe_subreddit(subreddit, access).await?;
+		self.require_safe_subreddit(subreddit).await?;
 		if sort == PostSort::Best {
 			return Err(invalid_parameter("sort", sort.as_str()));
 		}
-		self.post_listing(Some(subreddit), sort, query, access).await
+		self.post_listing(Some(subreddit), sort, query).await
 	}
 
 	pub(crate) async fn feed_posts(&self, subreddits: &str, sort: PostSort, query: &ListingQuery) -> Result<Listing<Thing<Post>>, ServiceError> {
@@ -83,26 +83,26 @@ impl RedditService {
 		if sort == PostSort::Best {
 			return Err(invalid_parameter("sort", sort.as_str()));
 		}
-		self.post_listing(Some(subreddits), sort, query, Access::Standard).await
+		self.post_listing(Some(subreddits), sort, query).await
 	}
 
-	pub async fn posts_by_id(&self, names: &str, access: Access) -> Result<Listing<Thing<Post>>, ServiceError> {
+	pub async fn posts_by_id(&self, names: &str) -> Result<Listing<Thing<Post>>, ServiceError> {
 		let names = canonical_post_fullnames(names)?;
-		let json = self.client.json(format!("/by_id/{names}"), access).await?;
+		let json = self.client.json(format!("/by_id/{names}")).await?;
 		let mut listing = parse_post_listing(&json)?;
 		clear_listing_modhash(&mut listing);
 		self.content.filter_posts(&mut listing);
 		Ok(listing)
 	}
 
-	pub async fn post_duplicates(&self, article: &str, query: &DuplicateQuery, access: Access) -> Result<PostDuplicates, ServiceError> {
+	pub async fn post_duplicates(&self, article: &str, query: &DuplicateQuery) -> Result<PostDuplicates, ServiceError> {
 		validate_id36("article", article)?;
 		validate_listing_query(&query.listing)?;
 		if let Some(subreddit) = &query.subreddit {
 			validate_subreddit(subreddit)?;
 		}
 		let path = with_query(format!("/duplicates/{article}"), encode_duplicate_query(query));
-		let json = self.client.json(path, access).await?;
+		let json = self.client.json(path).await?;
 		let mut duplicates = parse_post_duplicates(&json)?;
 		clear_listing_modhash(&mut duplicates.0);
 		clear_listing_modhash(&mut duplicates.1);
@@ -112,52 +112,52 @@ impl RedditService {
 		Ok(duplicates)
 	}
 
-	pub async fn post_comments(&self, article: &str, query: &CommentQuery, access: Access) -> Result<PostComments, ServiceError> {
-		self.comments(None, article, query, access).await
+	pub async fn post_comments(&self, article: &str, query: &CommentQuery) -> Result<PostComments, ServiceError> {
+		self.comments(None, article, query).await
 	}
 
-	pub async fn subreddit_post_comments(&self, subreddit: &str, article: &str, query: &CommentQuery, access: Access) -> Result<PostComments, ServiceError> {
+	pub async fn subreddit_post_comments(&self, subreddit: &str, article: &str, query: &CommentQuery) -> Result<PostComments, ServiceError> {
 		validate_subreddit(subreddit)?;
-		self.comments(Some(subreddit), article, query, access).await
+		self.comments(Some(subreddit), article, query).await
 	}
 
-	pub async fn subreddit_about(&self, subreddit: &str, access: Access) -> Result<Thing<Subreddit>, ServiceError> {
+	pub async fn subreddit_about(&self, subreddit: &str) -> Result<Thing<Subreddit>, ServiceError> {
 		validate_subreddit(subreddit)?;
-		let json = self.client.json(format!("/r/{subreddit}/about"), access).await?;
+		let json = self.client.json(format!("/r/{subreddit}/about")).await?;
 		let subreddit = parse_subreddit(&json)?;
 		self.content.require_subreddit(&subreddit)?;
 		Ok(subreddit)
 	}
 
-	pub(super) async fn require_safe_subreddit(&self, subreddit: &str, access: Access) -> Result<(), ServiceError> {
+	pub(super) async fn require_safe_subreddit(&self, subreddit: &str) -> Result<(), ServiceError> {
 		if self.content.allows_nsfw() {
 			return Ok(());
 		}
 		for name in subreddit.split('+') {
-			self.subreddit_about(name, access).await?;
+			self.subreddit_about(name).await?;
 		}
 		Ok(())
 	}
 
-	pub async fn user_about(&self, username: &str, access: Access) -> Result<Thing<User>, ServiceError> {
+	pub async fn user_about(&self, username: &str) -> Result<Thing<User>, ServiceError> {
 		validate_username(username)?;
-		let json = self.client.json(format!("/user/{username}/about"), access).await?;
+		let json = self.client.json(format!("/user/{username}/about")).await?;
 		let user = parse_user(&json)?;
 		self.content.require_user(&user)?;
 		Ok(user)
 	}
 
-	pub async fn subreddits(&self, sort: SubredditSort, query: &ListingQuery, access: Access) -> Result<Listing<Thing<Subreddit>>, ServiceError> {
+	pub async fn subreddits(&self, sort: SubredditSort, query: &ListingQuery) -> Result<Listing<Thing<Subreddit>>, ServiceError> {
 		validate_listing_query(query)?;
 		let path = with_query(format!("/subreddits/{}", sort.as_str()), encode_listing_query(query, None));
-		let json = self.client.json(path, access).await?;
+		let json = self.client.json(path).await?;
 		let mut listing = parse_subreddit_listing(&json)?;
 		clear_listing_modhash(&mut listing);
 		self.content.filter_subreddits(&mut listing);
 		Ok(listing)
 	}
 
-	pub async fn search_subreddits(&self, query: &SubredditSearchQuery, access: Access) -> Result<Listing<Thing<Subreddit>>, ServiceError> {
+	pub async fn search_subreddits(&self, query: &SubredditSearchQuery) -> Result<Listing<Thing<Subreddit>>, ServiceError> {
 		validate_subreddit_search_query(query)?;
 		if !self.content.allows_nsfw() && query.include_over_18 == Some(true) {
 			return Err(ServiceError::ContentBlocked);
@@ -167,28 +167,28 @@ impl RedditService {
 			query.include_over_18 = Some(false);
 		}
 		let path = with_query("/subreddits/search".to_string(), encode_subreddit_search_query(&query));
-		let json = self.client.json(path, access).await?;
+		let json = self.client.json(path).await?;
 		let mut listing = parse_subreddit_listing(&json)?;
 		clear_listing_modhash(&mut listing);
 		self.content.filter_subreddits(&mut listing);
 		Ok(listing)
 	}
 
-	async fn post_listing(&self, subreddit: Option<&str>, sort: PostSort, query: &ListingQuery, access: Access) -> Result<Listing<Thing<Post>>, ServiceError> {
+	async fn post_listing(&self, subreddit: Option<&str>, sort: PostSort, query: &ListingQuery) -> Result<Listing<Thing<Post>>, ServiceError> {
 		validate_listing_query(query)?;
 		let base = match subreddit {
 			Some(subreddit) => format!("/r/{}/{}", subreddit.replace('+', "%2B"), sort.as_str()),
 			None => format!("/{}", sort.as_str()),
 		};
 		let path = with_query(base, encode_listing_query(query, None));
-		let json = self.client.json(path, access).await?;
+		let json = self.client.json(path).await?;
 		let mut listing = parse_post_listing(&json)?;
 		clear_listing_modhash(&mut listing);
 		self.content.filter_posts(&mut listing);
 		Ok(listing)
 	}
 
-	async fn comments(&self, subreddit: Option<&str>, article: &str, query: &CommentQuery, access: Access) -> Result<PostComments, ServiceError> {
+	async fn comments(&self, subreddit: Option<&str>, article: &str, query: &CommentQuery) -> Result<PostComments, ServiceError> {
 		validate_id36("article", article)?;
 		validate_comment_query(query)?;
 		let base = match subreddit {
@@ -196,7 +196,7 @@ impl RedditService {
 			None => format!("/comments/{article}"),
 		};
 		let path = with_query(base, encode_comment_query(query));
-		let json = self.client.json(path, access).await?;
+		let json = self.client.json(path).await?;
 		let mut comments = parse_comments(&json)?;
 		clear_post_comments_modhash(&mut comments);
 		self.content.require_post_comments(&comments)?;

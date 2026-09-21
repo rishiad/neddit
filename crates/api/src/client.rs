@@ -1,7 +1,6 @@
 pub mod error;
 mod oauth;
 
-use crate::media::DomainPolicy;
 use axum::{body::Body, http::HeaderMap, response::Response};
 use futures_lite::{future::Boxed, FutureExt};
 use percent_encoding::{percent_encode, CONTROLS};
@@ -20,7 +19,7 @@ use wreq::{header as wreq_header, Client as WreqClient, EmulationFactory, Method
 use wreq_util::{Emulation, EmulationOS, EmulationOption};
 
 use self::error::ClientError;
-pub use self::oauth::{AuthError, OAuthHealth};
+pub use self::oauth::AuthError;
 use self::oauth::{CredentialLease, OAuthHandle};
 
 const REDDIT_URL_BASE: &str = "https://oauth.reddit.com";
@@ -28,39 +27,14 @@ const REDDIT_URL_BASE_HOST: &str = "oauth.reddit.com";
 const MAX_UPSTREAM_BYTES: usize = 8 * 1024 * 1024;
 const EXTERNAL_RANGE_CHUNK: u64 = 8 * 1024 * 1024;
 
-const REDDIT_SHORT_URL_BASE: &str = "https://redd.it";
-const REDDIT_SHORT_URL_BASE_HOST: &str = "redd.it";
-
 const ALTERNATIVE_REDDIT_URL_BASE: &str = "https://www.reddit.com";
 const ALTERNATIVE_REDDIT_URL_BASE_HOST: &str = "www.reddit.com";
-
-const URL_PAIRS: [(&str, &str); 2] = [
-	(ALTERNATIVE_REDDIT_URL_BASE, ALTERNATIVE_REDDIT_URL_BASE_HOST),
-	(REDDIT_SHORT_URL_BASE, REDDIT_SHORT_URL_BASE_HOST),
-];
-
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
-pub enum Access {
-	#[default]
-	Standard,
-	Quarantined,
-}
-
-impl Access {
-	fn quarantine_cookie(self) -> &'static str {
-		match self {
-			Self::Standard => "",
-			Self::Quarantined => "_options=%7B%22pref_quarantine_optin%22%3A%20true%2C%20%22pref_gated_sr_optin%22%3A%20true%7D",
-		}
-	}
-}
 
 #[derive(Clone)]
 pub struct RedditClient {
 	http: WreqClient,
 	external_http: WreqClient,
 	oauth: OAuthHandle,
-	domains: DomainPolicy,
 	cache: Option<crate::storage::Cache>,
 }
 
@@ -128,10 +102,6 @@ fn is_public_ipv6(address: Ipv6Addr) -> bool {
 impl RedditClient {
 
 	pub async fn new() -> Result<Self, ClientError> {
-		Self::with_domains(DomainPolicy::default()).await
-	}
-
-	pub async fn with_domains(domains: DomainPolicy) -> Result<Self, ClientError> {
 		let http = Self::build_http_client()?;
 		let external_http = Self::build_external_http_client()?;
 		let oauth = OAuthHandle::start(http.clone()).await?;
@@ -139,7 +109,6 @@ impl RedditClient {
 			http,
 			external_http,
 			oauth,
-			domains,
 			cache: None,
 		})
 	}
@@ -151,10 +120,6 @@ impl RedditClient {
 
 	pub async fn shutdown(&self) {
 		self.oauth.shutdown().await;
-	}
-
-	pub async fn oauth_health(&self) -> Result<OAuthHealth, ClientError> {
-		Ok(self.oauth.health().await?)
 	}
 
 	/// Build the HTTP client used for Reddit and media requests.
@@ -186,84 +151,6 @@ impl RedditClient {
 			builder = builder.dns_resolver(PublicDns);
 		}
 		builder.build().map_err(ClientError::BuildClient)
-	}
-
-	/// Gets the canonical path for a resource on Reddit. This is accomplished by
-	/// making a `HEAD` request to Reddit at the path given in `path`.
-	///
-	/// This function returns `Ok(Some(path))`, where `path`'s value is identical
-	/// to that of the value of the argument `path`, if Reddit responds to our
-	/// `HEAD` request with a 2xx-family HTTP code. It will also return an
-	/// `Ok(Some(String))` if Reddit responds to our `HEAD` request with a
-	/// `Location` header in the response, and the HTTP code is in the 3xx-family;
-	/// the `String` will contain the path as reported in `Location`. The return
-	/// value is `Ok(None)` if Reddit responded with another 3xx status.
-	#[async_recursion::async_recursion]
-	pub async fn canonical_path(&self, path: String, tries: u8) -> Result<Option<String>, ClientError> {
-		if tries == 0 {
-			return Ok(None);
-		}
-
-		// for each URL pair, try the HEAD request
-		let res = {
-			let mut res = None;
-			for (url_base, url_base_host) in URL_PAIRS {
-				res = self.reddit_short_head(path.clone(), Access::Quarantined, url_base, url_base_host).await.ok();
-				if let Some(res) = &res {
-					if !res.response.status().is_client_error() {
-						break;
-					}
-				}
-			}
-			res
-		};
-
-		let UpstreamResponse { response: res, .. } = res.ok_or_else(|| ClientError::HeadUnavailable { path: path.clone() })?;
-		let status = res.status().as_u16();
-		let policy_error = res.headers().get(wreq_header::RETRY_AFTER).is_some();
-
-		match status {
-			// If Reddit responds with a 2xx, then the path is already canonical.
-			200..=299 => Ok(Some(path)),
-
-			// If Reddit responds with a 301, then the path is redirected.
-			301 => match res.headers().get(wreq_header::LOCATION) {
-				Some(val) => {
-					let original = val.to_str().map_err(|source| ClientError::InvalidLocationHeader { path: path.clone(), source })?;
-
-					// We need to strip the .json suffix from the original path.
-					// In addition, we want to remove share parameters.
-					// Cut it off here instead of letting it propagate all the way
-					// to main.rs
-					let stripped_uri = original.strip_suffix(".json").unwrap_or(original).split('?').next().unwrap_or_default();
-
-					// OAuth endpoints can return absolute Reddit URLs. Keep canonical
-					// resolution inside this service rather than redirecting to Reddit.
-					let uri = self.domains.rewrite_navigation(stripped_uri).unwrap_or_else(|| stripped_uri.to_string());
-
-					// Decrement tries and try again
-					self.canonical_path(uri, tries - 1).await
-				}
-				None => Err(ClientError::MissingRedirectLocation { path }),
-			},
-
-			// If Reddit responds with anything other than 3xx (except for the 2xx and 301
-			// as above), return a None.
-			300..=399 => Ok(None),
-
-			// Rate limiting
-			429 => Err(ClientError::RateLimited { reset: None }),
-
-			// Special condition rate limiting - https://github.com/redlib-org/redlib/issues/229
-			403 if policy_error => Err(ClientError::RateLimited { reset: None }),
-
-			_ => Ok(
-				res
-					.headers()
-					.get(wreq_header::LOCATION)
-					.map(|val| percent_encode(val.as_bytes(), CONTROLS).to_string().trim_start_matches(REDDIT_URL_BASE).to_string()),
-			),
-		}
 	}
 
 	pub async fn proxy(&self, url: String, request_headers: &HeaderMap) -> Result<Response, ClientError> {
@@ -320,40 +207,26 @@ impl RedditClient {
 
 	/// Makes a GET request to Reddit at `path`. By default, this will honor HTTP
 	/// 3xx codes Reddit returns and will automatically redirect.
-	fn reddit_get(&self, path: String, access: Access) -> Boxed<Result<UpstreamResponse, ClientError>> {
-		self.request(&Method::GET, with_raw_json(path), true, access, REDDIT_URL_BASE, REDDIT_URL_BASE_HOST)
+	fn reddit_get(&self, path: String) -> Boxed<Result<UpstreamResponse, ClientError>> {
+		self.request(&Method::GET, with_raw_json(path), true, REDDIT_URL_BASE, REDDIT_URL_BASE_HOST)
 	}
 
-	fn reddit_html_get(&self, path: String, access: Access) -> Boxed<Result<UpstreamResponse, ClientError>> {
-		self.request(&Method::GET, path, false, access, ALTERNATIVE_REDDIT_URL_BASE, ALTERNATIVE_REDDIT_URL_BASE_HOST)
-	}
-
-	/// Makes a HEAD request to Reddit at `path, using the short URL base. This will not follow redirects.
-	fn reddit_short_head(&self, path: String, access: Access, base_path: &'static str, host: &'static str) -> Boxed<Result<UpstreamResponse, ClientError>> {
-		self.request(&Method::HEAD, path, false, access, base_path, host)
+	fn reddit_html_get(&self, path: String) -> Boxed<Result<UpstreamResponse, ClientError>> {
+		self.request(&Method::GET, path, false, ALTERNATIVE_REDDIT_URL_BASE, ALTERNATIVE_REDDIT_URL_BASE_HOST)
 	}
 
 	/// Makes a request to Reddit. If `redirect` is `true`, `request_with_redirect`
 	/// will recurse on the URL that Reddit provides in the Location HTTP header
 	/// in its response.
-	fn request(
-		&self,
-		method: &'static Method,
-		path: String,
-		redirect: bool,
-		access: Access,
-		base_path: &'static str,
-		host: &'static str,
-	) -> Boxed<Result<UpstreamResponse, ClientError>> {
+	fn request(&self, method: &'static Method, path: String, redirect: bool, base_path: &'static str, host: &'static str) -> Boxed<Result<UpstreamResponse, ClientError>> {
 		let url = format!("{base_path}{path}");
 		let client = self.clone();
 
 		async move {
 			let lease = client.oauth.acquire().await?;
 			let generation = lease.generation();
-			let mut headers = Vec::with_capacity(lease.headers().len() + 2);
+			let mut headers = Vec::with_capacity(lease.headers().len() + 1);
 			headers.push(("Host", host));
-			headers.push(("Cookie", access.quarantine_cookie()));
 			headers.extend(lease.headers().iter().map(|(name, value)| (name.as_str(), value.as_str())));
 			fastrand::shuffle(&mut headers);
 
@@ -387,18 +260,18 @@ impl RedditClient {
 			let new_path = with_raw_json(new_path);
 			drop(response);
 			drop(lease);
-			client.request(method, new_path, true, access, base_path, host).await
+			client.request(method, new_path, true, base_path, host).await
 		}
 		.boxed()
 	}
 
 	/// Make a bounded request to a Reddit WWW endpoint and return its HTML.
-	pub async fn html(&self, path: String, access: Access) -> Result<String, ClientError> {
+	pub async fn html(&self, path: String) -> Result<String, ClientError> {
 		let UpstreamResponse {
 			mut response,
 			lease,
 			rate_limit_reset,
-		} = self.reddit_html_get(path.clone(), access).await?;
+		} = self.reddit_html_get(path.clone()).await?;
 		let generation = lease.generation();
 		let status = response.status();
 		if response.content_length().is_some_and(|n| n > MAX_UPSTREAM_BYTES as u64) {
@@ -424,23 +297,23 @@ impl RedditClient {
 	}
 
 	/// Make a request to a Reddit API and parse the JSON response.
-	pub async fn json(&self, path: String, access: Access) -> Result<Value, ClientError> {
+	pub async fn json(&self, path: String) -> Result<Value, ClientError> {
 		let Some(cache) = &self.cache else {
-			return self.fetch_json(path, access).await;
+			return self.fetch_json(path).await;
 		};
-		let key = cache_key(&path, access);
+		let key = cache_key(&path);
 		let ttl = cache_ttl(&path);
-		tokio::time::timeout(Duration::from_secs(20), cache.json(key, ttl, self.fetch_json(path, access)))
+		tokio::time::timeout(Duration::from_secs(20), cache.json(key, ttl, self.fetch_json(path)))
 			.await
 			.map_err(|_| ClientError::Timeout)?
 	}
 
-	async fn fetch_json(&self, path: String, access: Access) -> Result<Value, ClientError> {
+	async fn fetch_json(&self, path: String) -> Result<Value, ClientError> {
 		let UpstreamResponse {
 			mut response,
 			lease,
 			rate_limit_reset,
-		} = self.reddit_get(path.clone(), access).await?;
+		} = self.reddit_get(path.clone()).await?;
 		let generation = lease.generation();
 		let status = response.status();
 		if response.content_length().is_some_and(|n| n > MAX_UPSTREAM_BYTES as u64) {
@@ -530,13 +403,13 @@ impl RedditClient {
 	}
 }
 
-pub(crate) fn cache_key(path: &str, access: Access) -> String {
+pub(crate) fn cache_key(path: &str) -> String {
 	let (path, query) = path.split_once('?').unwrap_or((path, ""));
 	let mut pairs: Vec<_> = form_urlencoded::parse(query.as_bytes()).collect();
 	// Stable key sort preserves the order of duplicate parameters.
 	pairs.sort_by(|a, b| a.0.cmp(&b.0));
 	let query = form_urlencoded::Serializer::new(String::new()).extend_pairs(pairs).finish();
-	format!("reddit-json-v1:{}", crate::storage::fingerprint(format!("{access:?}:{path}?{query}").as_bytes()))
+	format!("reddit-json-v1:{}", crate::storage::fingerprint(format!("{path}?{query}").as_bytes()))
 }
 
 fn cache_ttl(path: &str) -> i64 {

@@ -1,7 +1,6 @@
 use super::*;
 use crate::service::ListingTime;
 use crate::{
-	client::Access,
 	models::PublicThing,
 	service::{InfoQuery, ListingQuery, RedditService, SearchQuery, SearchResultType, SearchSort, SubredditSearchQuery, SubredditSearchSort, UserHistoryQuery, UserHistorySort},
 };
@@ -220,22 +219,19 @@ impl Source for RedditService {
 		match plan {
 			Plan::Posts(q) => {
 				self
-					.search(
-						&SearchQuery {
-							listing,
-							query: q.clone(),
-							include_over_18: Some(request.include_nsfw),
-							sort: Some(match sort {
-								"new" => SearchSort::New,
-								"top" => SearchSort::Top,
-								"hot" => SearchSort::Hot,
-								_ => SearchSort::Relevance,
-							}),
-							result_types: vec![SearchResultType::Post],
-							..Default::default()
-						},
-						Access::Standard,
-					)
+					.search(&SearchQuery {
+						listing,
+						query: q.clone(),
+						include_over_18: Some(request.include_nsfw),
+						sort: Some(match sort {
+							"new" => SearchSort::New,
+							"top" => SearchSort::Top,
+							"hot" => SearchSort::Hot,
+							_ => SearchSort::Relevance,
+						}),
+						result_types: vec![SearchResultType::Post],
+						..Default::default()
+					})
 					.await
 			}
 			Plan::Comments(Field::Author, author) => {
@@ -247,28 +243,24 @@ impl Source for RedditService {
 							sort: Some(UserHistorySort::New),
 							..Default::default()
 						},
-						Access::Standard,
 					)
 					.await
 			}
 			Plan::Comments(_, community) => self.recent_ql_comments(community, &listing).await,
 			Plan::Communities(q) => self
-				.search_subreddits(
-					&SubredditSearchQuery {
-						listing,
-						query: q.clone(),
-						search_query_id: None,
-						show_users: Some(false),
-						include_over_18: Some(request.include_nsfw),
-						sort: Some(if sort == "activity" {
-							SubredditSearchSort::Activity
-						} else {
-							SubredditSearchSort::Relevance
-						}),
-						typeahead_active: None,
-					},
-					Access::Standard,
-				)
+				.search_subreddits(&SubredditSearchQuery {
+					listing,
+					query: q.clone(),
+					search_query_id: None,
+					show_users: Some(false),
+					include_over_18: Some(request.include_nsfw),
+					sort: Some(if sort == "activity" {
+						SubredditSearchSort::Activity
+					} else {
+						SubredditSearchSort::Relevance
+					}),
+					typeahead_active: None,
+				})
 				.await
 				.map(|v| crate::models::Listing {
 					kind: v.kind,
@@ -285,26 +277,20 @@ impl Source for RedditService {
 				}),
 			Plan::Names(names) => {
 				self
-					.info(
-						&InfoQuery {
-							subreddit_names: names.clone(),
-							..Default::default()
-						},
-						Access::Standard,
-					)
+					.info(&InfoQuery {
+						subreddit_names: names.clone(),
+						..Default::default()
+					})
 					.await
 			}
 		}
 	}
 	async fn parents(&self, ids: &[String]) -> Upstream {
 		self
-			.info(
-				&InfoQuery {
-					ids: ids.to_vec(),
-					..Default::default()
-				},
-				Access::Standard,
-			)
+			.info(&InfoQuery {
+				ids: ids.to_vec(),
+				..Default::default()
+			})
 			.await
 	}
 }

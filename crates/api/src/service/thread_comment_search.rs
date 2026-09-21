@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use url::form_urlencoded::Serializer;
 
 use crate::{
-	client::Access,
 	models::{Comment, PublicThing},
 	parsing::thread_comment_search::parse_thread_comment_ids,
 	service::{
@@ -19,16 +18,16 @@ pub struct ThreadCommentSearchQuery {
 }
 
 impl RedditService {
-	pub async fn search_post_comments(&self, subreddit: &str, post_id: &str, query: &ThreadCommentSearchQuery, access: Access) -> Result<Vec<Comment>, ServiceError> {
+	pub async fn search_post_comments(&self, subreddit: &str, post_id: &str, query: &ThreadCommentSearchQuery) -> Result<Vec<Comment>, ServiceError> {
 		validate_subreddit(subreddit)?;
-		self.require_safe_subreddit(subreddit, access).await?;
+		self.require_safe_subreddit(subreddit).await?;
 		validate_id36("post_id", post_id)?;
 		let search = query.query.trim();
 		if search.is_empty() || search.chars().count() > 512 {
 			return Err(super::reddit::invalid_parameter("q", &query.query));
 		}
 		let path = thread_comment_search_path(subreddit, post_id, search, query.sort);
-		let html = self.client.html(path, access).await?;
+		let html = self.client.html(path).await?;
 		let ids = parse_thread_comment_ids(&html, post_id)?;
 		if ids.is_empty() {
 			return Ok(Vec::new());
@@ -37,13 +36,10 @@ impl RedditService {
 		let mut hydrated = HashMap::new();
 		for batch in ids.chunks(100) {
 			let listing = self
-				.info(
-					&InfoQuery {
-						ids: batch.to_vec(),
-						..InfoQuery::default()
-					},
-					access,
-				)
+				.info(&InfoQuery {
+					ids: batch.to_vec(),
+					..InfoQuery::default()
+				})
 				.await?;
 			for item in listing.data.children {
 				if let PublicThing::Comment(comment) = item {

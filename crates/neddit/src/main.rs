@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 	} else {
 		None
 	};
-	let reddit = RedditClient::with_domains(domains).await?.with_cache(cache.clone());
+	let reddit = RedditClient::new().await?.with_cache(cache.clone());
 	let service = RedditService::with_content_policy(reddit.clone(), ContentPolicy::new(config.server.allow_nsfw)).with_storage(cache, shortlinks);
 	let video_exclusions = config.video_exclusions()?;
 	let video = config.video.enabled.then(|| VideoResolver::new(&config.video.executable, video_exclusions));

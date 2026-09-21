@@ -26,21 +26,11 @@ pub enum ClientError {
 	#[error("invalid proxy URL `{url}`")]
 	InvalidProxyUrl { url: String },
 
-	#[error("unable to make a HEAD request for `{path}`")]
-	HeadUnavailable { path: String },
-
 	#[error("Reddit returned an invalid redirect for `{path}`")]
 	InvalidRedirect { path: String },
 
 	#[error("Reddit returned a redirect without a Location header for `{path}`")]
 	MissingRedirectLocation { path: String },
-
-	#[error("Reddit returned an invalid Location header for `{path}`")]
-	InvalidLocationHeader {
-		path: String,
-		#[source]
-		source: wreq::header::ToStrError,
-	},
 
 	#[error("failed to receive the response body for `{path}`")]
 	Body {

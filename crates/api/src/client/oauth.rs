@@ -3,7 +3,6 @@ mod manager;
 
 use thiserror::Error;
 
-pub use manager::OAuthHealth;
 pub(crate) use manager::{CredentialLease, OAuthHandle};
 
 #[derive(Debug, Error)]

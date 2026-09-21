@@ -1,4 +1,3 @@
-use crate::client::Access;
 use crate::models::MoreChildren;
 use crate::parsing::more_children::parse_more_children;
 use crate::service::reddit::{bool_string, invalid_parameter, validate_id36, with_query};
@@ -7,14 +6,14 @@ use crate::service::{MoreChildrenQuery, RedditService, ServiceError};
 use url::form_urlencoded::Serializer;
 
 impl RedditService {
-	pub async fn more_children(&self, query: &MoreChildrenQuery, access: Access) -> Result<MoreChildren, ServiceError> {
+	pub async fn more_children(&self, query: &MoreChildrenQuery) -> Result<MoreChildren, ServiceError> {
 		validate_more_children_query(query)?;
-		if !self.content.allows_nsfw() && self.posts_by_id(&query.link_id, access).await?.data.children.is_empty() {
+		if !self.content.allows_nsfw() && self.posts_by_id(&query.link_id).await?.data.children.is_empty() {
 			return Err(ServiceError::ContentBlocked);
 		}
 		let _permit = self.more_children_gate.acquire().await.expect("the more-children request semaphore is never closed");
 		let path = with_query("/api/morechildren".to_string(), encode_more_children_query(query));
-		let json = self.client.json(path, access).await?;
+		let json = self.client.json(path).await?;
 		let mut response = parse_more_children(&json)?;
 		clear_more_children_modhash(&mut response);
 		Ok(response)

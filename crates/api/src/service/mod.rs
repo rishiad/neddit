@@ -1,41 +1,22 @@
-mod comment_query;
 mod content;
-mod duplicate_query;
 mod error;
-mod info_query;
-mod listing_query;
 mod more_children;
-mod more_children_query;
-mod post_sort;
 mod public_read;
 mod query_codec;
 mod reddit;
 mod sanitize;
-mod search_query;
-mod subreddit_metadata;
-mod subreddit_search_query;
-mod subreddit_sort;
 mod thread_comment_search;
-mod user_directory_sort;
-mod user_history_query;
-mod user_search_query;
 mod wiki;
-mod wiki_page_query;
 
-pub use comment_query::{CommentQuery, CommentSort, CommentTheme};
 pub use content::ContentPolicy;
-pub use duplicate_query::{DuplicateQuery, DuplicateSort};
 pub use error::ServiceError;
-pub use info_query::InfoQuery;
-pub use listing_query::{ListingQuery, ListingShow, ListingTime};
-pub use more_children_query::{MoreChildrenApiType, MoreChildrenQuery};
-pub use post_sort::PostSort;
-pub use reddit::RedditService;
-pub use search_query::{SearchQuery, SearchResultType, SearchSort};
-pub use subreddit_search_query::{SubredditSearchQuery, SubredditSearchSort, Typeahead};
-pub use subreddit_sort::SubredditSort;
+pub use more_children::{MoreChildrenApiType, MoreChildrenQuery};
+pub use public_read::{
+	InfoQuery, SearchQuery, SearchResultType, SearchSort, UserDirectorySort, UserHistoryQuery, UserHistoryShow, UserHistorySort, UserHistoryType, UserSearchQuery,
+};
+pub use reddit::{
+	CommentQuery, CommentSort, CommentTheme, DuplicateQuery, DuplicateSort, ListingQuery, ListingShow, ListingTime, PostSort, RedditService, SubredditSearchQuery,
+	SubredditSearchSort, SubredditSort, Typeahead,
+};
 pub use thread_comment_search::ThreadCommentSearchQuery;
-pub use user_directory_sort::UserDirectorySort;
-pub use user_history_query::{UserHistoryQuery, UserHistoryShow, UserHistorySort, UserHistoryType};
-pub use user_search_query::UserSearchQuery;
-pub use wiki_page_query::WikiPageQuery;
+pub use wiki::WikiPageQuery;

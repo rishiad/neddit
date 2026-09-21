@@ -1,6 +1,6 @@
 use crate::client::{error::ClientError, RedditClient};
+use crate::media::video::{decode_video_target, rewrite_hls as rewrite_video_hls, validate_video_target, VideoError, VideoPlayback, VideoResolver};
 use crate::media::{MediaSigner, MediaUrlError};
-use crate::video::{decode_video_target, rewrite_hls as rewrite_video_hls, validate_video_target, VideoError, VideoPlayback, VideoResolver};
 use axum::{
 	body::{to_bytes, Body},
 	extract::{MatchedPath, Path, Request, State},
@@ -19,7 +19,7 @@ use tower_http::compression::{
 use tracing::Instrument as _;
 use url::Url;
 
-const COMPRESSION_MIN_SIZE: u16 = 1452;
+const COMPRESSION_MIN_SIZE: u64 = 1452;
 const MANIFEST_SIZE_LIMIT: usize = 8 * 1024 * 1024;
 const MAX_MEDIA_REDIRECTS: usize = 4;
 const MEDIA_CACHE_CONTROL: &str = "public, max-age=604800, immutable";
@@ -68,7 +68,7 @@ impl MediaProxy {
 pub fn router(media: MediaProxy) -> Router {
 	let mut router = Router::new().route("/media/{signature}/{encoded}", get(proxy_media));
 	if media.video.is_some() {
-		router = router.route("/video/media/{signature}/{encoded}", get(proxy_video));
+		router = router.route("/media/video/{signature}/{encoded}", get(proxy_video));
 	}
 	router.with_state(media)
 }
@@ -125,85 +125,50 @@ fn route_label(request: &Request) -> String {
 		.extensions()
 		.get::<MatchedPath>()
 		.map(|path| path.as_str().to_owned())
-		.unwrap_or_else(|| fallback_route(request.uri().path()).to_owned())
-}
-
-fn fallback_route(path: &str) -> &'static str {
-	if path == "/" {
-		"/"
-	} else if path == "/healthz" {
-		"/healthz"
-	} else if path.starts_with("/assets/") {
-		"/assets/*"
-	} else if path.starts_with("/media/") {
-		"/media/*"
-	} else if path.starts_with("/video/media/") {
-		"/video/media/*"
-	} else if path.starts_with("/video/") {
-		"/video/*"
-	} else if path.starts_with("/api/") {
-		"/api/*"
-	} else if path.starts_with("/search") {
-		"/search/*"
-	} else if path.starts_with("/feed") || path.starts_with("/f/") {
-		"/feeds/*"
-	} else if path.starts_with("/r/") {
-		"/r/*"
-	} else if path.starts_with("/comments/") {
-		"/comments/*"
-	} else if path.starts_with("/user/") {
-		"/user/*"
-	} else {
-		"<unmatched>"
-	}
+		.unwrap_or_else(|| "<unmatched>".to_owned())
 }
 
 fn quiet_route(route: &str) -> bool {
-	route == "/healthz" || route.starts_with("/assets/") || route.starts_with("/media/") || route.starts_with("/video/media/")
+	route == "/healthz" || route.starts_with("/assets/") || route.starts_with("/media/")
 }
 
 async fn proxy_media(State(media): State<MediaProxy>, Path((signature, encoded)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ProxyError> {
-	let mut target = media.signer.decode_target(&signature, &encoded)?;
+	let target = media.signer.decode_target(&signature, &encoded)?;
 	let etag = format!("\"{signature}\"");
 	if request_has_etag(&headers, &etag) {
 		return not_modified(&etag, MEDIA_CACHE_CONTROL);
 	}
-
-	for redirect in 0..=MAX_MEDIA_REDIRECTS {
-		let response = media.client.proxy(target.to_string(), &headers).await?;
-		if response.status() == StatusCode::NOT_MODIFIED || !response.status().is_redirection() {
-			return finish_media_response(response, &target, &media.signer, &etag).await;
-		}
-		if redirect == MAX_MEDIA_REDIRECTS {
-			return Err(ProxyError::TooManyRedirects);
-		}
-		let location = response
-			.headers()
-			.get(header::LOCATION)
-			.ok_or(ProxyError::MissingRedirectLocation)?
-			.to_str()
-			.map_err(|_| ProxyError::InvalidRedirect)?;
-		let redirected = target.join(location).map_err(|_| ProxyError::InvalidRedirect)?;
-		media.signer.validate_media_target(&redirected).map_err(|_| ProxyError::ForbiddenRedirect)?;
-		target = redirected;
-	}
-
-	Err(ProxyError::TooManyRedirects)
+	let (response, target) = follow_redirects(&media, target, &headers, ProxySource::Reddit).await?;
+	finish_proxy_response(response, &target, &media.signer, &etag, MEDIA_CACHE_CONTROL, false).await
 }
 
 async fn proxy_video(State(media): State<MediaProxy>, Path((signature, encoded)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ProxyError> {
 	let video = media.video.as_ref().ok_or(VideoError::Disabled)?;
-	let mut target = decode_video_target(&media.signer, &signature, &encoded)?;
+	let target = decode_video_target(&media.signer, &signature, &encoded)?;
 	let user_agent = video.user_agent_for(&target).await;
 	let etag = format!("\"{signature}\"");
 	if request_has_etag(&headers, &etag) {
 		return not_modified(&etag, VIDEO_CACHE_CONTROL);
 	}
+	let source = ProxySource::External(user_agent.as_deref());
+	let (response, target) = follow_redirects(&media, target, &headers, source).await?;
+	finish_proxy_response(response, &target, &media.signer, &etag, VIDEO_CACHE_CONTROL, true).await
+}
 
+#[derive(Clone, Copy)]
+enum ProxySource<'a> {
+	Reddit,
+	External(Option<&'a str>),
+}
+
+async fn follow_redirects(media: &MediaProxy, mut target: Url, headers: &HeaderMap, source: ProxySource<'_>) -> Result<(Response, Url), ProxyError> {
 	for redirect in 0..=MAX_MEDIA_REDIRECTS {
-		let response = media.client.proxy_external(target.to_string(), &headers, user_agent.as_deref()).await?;
+		let response = match source {
+			ProxySource::Reddit => media.client.proxy(target.to_string(), headers).await?,
+			ProxySource::External(user_agent) => media.client.proxy_external(target.to_string(), headers, user_agent).await?,
+		};
 		if response.status() == StatusCode::NOT_MODIFIED || !response.status().is_redirection() {
-			return finish_video_response(response, &target, &media.signer, &etag).await;
+			return Ok((response, target));
 		}
 		if redirect == MAX_MEDIA_REDIRECTS {
 			return Err(ProxyError::TooManyRedirects);
@@ -215,37 +180,36 @@ async fn proxy_video(State(media): State<MediaProxy>, Path((signature, encoded))
 			.to_str()
 			.map_err(|_| ProxyError::InvalidRedirect)?;
 		let redirected = target.join(location).map_err(|_| ProxyError::InvalidRedirect)?;
-		validate_video_target(&redirected).map_err(|_| ProxyError::ForbiddenRedirect)?;
+		match source {
+			ProxySource::Reddit => media.signer.validate_media_target(&redirected).map_err(|_| ProxyError::ForbiddenRedirect)?,
+			ProxySource::External(_) => validate_video_target(&redirected).map_err(|_| ProxyError::ForbiddenRedirect)?,
+		}
 		target = redirected;
 	}
-
 	Err(ProxyError::TooManyRedirects)
 }
 
-async fn finish_media_response(mut response: Response, target: &Url, signer: &MediaSigner, etag: &str) -> Result<Response, ProxyError> {
+async fn finish_proxy_response(
+	mut response: Response,
+	target: &Url,
+	signer: &MediaSigner,
+	etag: &str,
+	cache_control: &'static str,
+	external_video: bool,
+) -> Result<Response, ProxyError> {
 	if response.status().is_success() && is_hls(&response, target) {
-		response = rewrite_manifest(response, |manifest| signer.rewrite_hls(manifest, target)).await?;
-	} else if response.status().is_success() && is_dash(&response, target) {
+		response = if external_video {
+			rewrite_manifest(response, |manifest| rewrite_video_hls(manifest, target, signer)).await?
+		} else {
+			rewrite_manifest(response, |manifest| signer.rewrite_hls(manifest, target)).await?
+		};
+	} else if !external_video && response.status().is_success() && is_dash(&response, target) {
 		response = rewrite_manifest(response, |manifest| signer.rewrite_dash(manifest, target)).await?;
 	}
 
 	if response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED {
 		let headers = response.headers_mut();
-		headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(MEDIA_CACHE_CONTROL));
-		headers.insert(header::ETAG, HeaderValue::from_str(etag).map_err(|_| ProxyError::InvalidEtag)?);
-		headers.remove(header::LOCATION);
-	}
-	Ok(response)
-}
-
-async fn finish_video_response(mut response: Response, target: &Url, signer: &MediaSigner, etag: &str) -> Result<Response, ProxyError> {
-	if response.status().is_success() && is_hls(&response, target) {
-		response = rewrite_manifest(response, |manifest| rewrite_video_hls(manifest, target, signer)).await?;
-	}
-
-	if response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED {
-		let headers = response.headers_mut();
-		headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(VIDEO_CACHE_CONTROL));
+		headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache_control));
 		headers.insert(header::ETAG, HeaderValue::from_str(etag).map_err(|_| ProxyError::InvalidEtag)?);
 		headers.remove(header::LOCATION);
 	}
@@ -379,4 +343,3 @@ async fn shutdown_signal() {
 		}
 	}
 }
-

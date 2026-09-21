@@ -6,7 +6,7 @@ use crate::parsing::subreddit::{parse_subreddit, parse_subreddit_listing};
 use crate::parsing::user::parse_user;
 use crate::service::query_codec;
 use crate::service::sanitize::{clear_listing_modhash, clear_post_comments_modhash};
-use crate::service::{CommentQuery, ContentPolicy, DuplicateQuery, ListingQuery, PostSort, ServiceError, SubredditSearchQuery, SubredditSort};
+use crate::service::{ContentPolicy, ServiceError};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
@@ -355,3 +355,242 @@ pub(super) fn invalid_parameter(parameter: &'static str, value: &str) -> Service
 		value: value.to_string(),
 	}
 }
+
+mod comment_query {
+	use utoipa::{IntoParams, ToSchema};
+
+	#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
+	#[schema(rename_all = "lowercase")]
+	#[serde(rename_all = "lowercase")]
+	pub enum CommentSort {
+		#[default]
+		Confidence,
+		Top,
+		New,
+		Controversial,
+		Old,
+		Random,
+		Qa,
+		Live,
+	}
+
+	impl CommentSort {
+		pub(crate) const fn as_str(self) -> &'static str {
+			match self {
+				Self::Confidence => "confidence",
+				Self::Top => "top",
+				Self::New => "new",
+				Self::Controversial => "controversial",
+				Self::Old => "old",
+				Self::Random => "random",
+				Self::Qa => "qa",
+				Self::Live => "live",
+			}
+		}
+	}
+
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
+	#[schema(rename_all = "lowercase")]
+	#[serde(rename_all = "lowercase")]
+	pub enum CommentTheme {
+		Default,
+		Dark,
+	}
+
+	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
+	#[into_params(parameter_in = Query)]
+	pub struct CommentQuery {
+		pub comment: Option<String>,
+		pub context: Option<u8>,
+		pub depth: Option<u32>,
+		pub limit: Option<u32>,
+		pub showedits: Option<bool>,
+		pub showmedia: Option<bool>,
+		pub showmore: Option<bool>,
+		pub showtitle: Option<bool>,
+		#[param(inline)]
+		pub sort: Option<CommentSort>,
+		pub sr_detail: Option<bool>,
+		#[param(inline)]
+		pub theme: Option<CommentTheme>,
+		pub threaded: Option<bool>,
+		pub truncate: Option<u8>,
+	}
+}
+
+mod duplicate_query {
+	use crate::service::ListingQuery;
+	use utoipa::{IntoParams, ToSchema};
+
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
+	#[schema(rename_all = "snake_case")]
+	#[serde(rename_all = "snake_case")]
+	pub enum DuplicateSort {
+		NumComments,
+		New,
+	}
+
+	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
+	#[into_params(parameter_in = Query)]
+	pub struct DuplicateQuery {
+		#[param(ignore)]
+		#[serde(flatten)]
+		pub listing: ListingQuery,
+		pub crossposts_only: Option<bool>,
+		#[param(inline)]
+		pub sort: Option<DuplicateSort>,
+		#[param(rename = "sr")]
+		#[serde(rename = "sr")]
+		pub subreddit: Option<String>,
+	}
+}
+
+mod listing_query {
+	use utoipa::{IntoParams, ToSchema};
+
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
+	#[schema(rename_all = "lowercase")]
+	#[serde(rename_all = "lowercase")]
+	pub enum ListingShow {
+		All,
+	}
+
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ToSchema)]
+	#[schema(rename_all = "lowercase")]
+	#[serde(rename_all = "lowercase")]
+	pub enum ListingTime {
+		Hour,
+		Day,
+		Week,
+		Month,
+		Year,
+		All,
+	}
+
+	impl ListingTime {
+		pub const fn as_str(self) -> &'static str {
+			match self {
+				Self::Hour => "hour",
+				Self::Day => "day",
+				Self::Week => "week",
+				Self::Month => "month",
+				Self::Year => "year",
+				Self::All => "all",
+			}
+		}
+	}
+
+	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
+	#[into_params(parameter_in = Query)]
+	pub struct ListingQuery {
+		pub after: Option<String>,
+		pub before: Option<String>,
+		#[param(minimum = 1, maximum = 100)]
+		pub limit: Option<u8>,
+		#[param(minimum = 0)]
+		pub count: Option<u32>,
+		#[param(inline)]
+		pub show: Option<ListingShow>,
+		#[param(rename = "t", inline)]
+		#[serde(rename = "t")]
+		pub time: Option<ListingTime>,
+		pub sr_detail: Option<bool>,
+		#[param(rename = "g")]
+		#[serde(rename = "g")]
+		pub geo_filter: Option<String>,
+	}
+}
+
+mod post_sort {
+	#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+	pub enum PostSort {
+		#[default]
+		Hot,
+		Best,
+		New,
+		Rising,
+		Top,
+		Controversial,
+	}
+
+	impl PostSort {
+		pub const fn as_str(self) -> &'static str {
+			match self {
+				Self::Hot => "hot",
+				Self::Best => "best",
+				Self::New => "new",
+				Self::Rising => "rising",
+				Self::Top => "top",
+				Self::Controversial => "controversial",
+			}
+		}
+	}
+}
+
+mod subreddit_search_query {
+	use crate::service::ListingQuery;
+	use utoipa::{IntoParams, ToSchema};
+
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
+	#[schema(rename_all = "lowercase")]
+	#[serde(rename_all = "lowercase")]
+	pub enum SubredditSearchSort {
+		Relevance,
+		Activity,
+	}
+
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
+	pub enum Typeahead {
+		#[serde(rename = "true")]
+		True,
+		#[serde(rename = "false")]
+		False,
+		#[serde(rename = "None")]
+		None,
+	}
+
+	#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
+	#[into_params(parameter_in = Query)]
+	pub struct SubredditSearchQuery {
+		#[param(ignore)]
+		#[serde(flatten)]
+		pub listing: ListingQuery,
+		#[param(rename = "q")]
+		#[serde(rename = "q")]
+		pub query: String,
+		pub search_query_id: Option<String>,
+		pub show_users: Option<bool>,
+		#[serde(default, with = "crate::service::query_codec::option_on_off", skip_serializing_if = "Option::is_none")]
+		pub include_over_18: Option<bool>,
+		#[param(inline)]
+		pub sort: Option<SubredditSearchSort>,
+		#[param(value_type = String)]
+		pub typeahead_active: Option<Typeahead>,
+	}
+}
+
+mod subreddit_sort {
+	#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+	pub enum SubredditSort {
+		Popular,
+		New,
+		Default,
+	}
+
+	impl SubredditSort {
+		pub const fn as_str(self) -> &'static str {
+			match self {
+				Self::Popular => "popular",
+				Self::New => "new",
+				Self::Default => "default",
+			}
+		}
+	}
+}
+
+pub use comment_query::{CommentQuery, CommentSort, CommentTheme};
+pub use duplicate_query::{DuplicateQuery, DuplicateSort};
+pub use listing_query::{ListingQuery, ListingShow, ListingTime};
+pub use post_sort::PostSort;
+pub use subreddit_search_query::{SubredditSearchQuery, SubredditSearchSort, Typeahead};
+pub use subreddit_sort::SubredditSort;

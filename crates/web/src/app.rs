@@ -4,7 +4,7 @@ use axum::{
 };
 use neddit_api::{
 	media::MediaSigner,
-	models::{PostComments, PublicThing},
+	models::{Post, PostComments, PublicThing},
 	server::MediaProxy,
 	service::{
 		CommentQuery, CommentSort, ListingQuery, ListingTime, MoreChildrenQuery, PostSort, RedditService, ServiceError, ThreadCommentSearchQuery, UserHistoryQuery,
@@ -43,10 +43,37 @@ pub struct FeedQuery {
 	page: Option<u32>,
 }
 
+impl FeedQuery {
+	fn listing(self, time: Option<ListingTime>) -> (ListingQuery, u32) {
+		let page = self.page.unwrap_or(1).max(1);
+		let count = listing_count(page, self.before.is_some());
+		(
+			ListingQuery {
+				after: self.after,
+				before: self.before,
+				count: Some(count),
+				limit: Some(PAGE_SIZE),
+				time,
+				..ListingQuery::default()
+			},
+			page,
+		)
+	}
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct PostQuery {
 	sort: Option<String>,
 	q: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PostPath {
+	article: String,
+	#[serde(default)]
+	subreddit: Option<String>,
+	#[serde(default)]
+	comment: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -74,23 +101,10 @@ pub async fn front_page(
 	State(features): State<WebFeatures>,
 	Query(query): Query<FeedQuery>,
 ) -> Result<FeedTemplate, AppError> {
-	let (sort, sort_name) = parse_sort(query.sort.as_deref())?;
-	let (time, time_name) = parse_feed_time(sort, query.t.as_deref())?;
-	let page = query.page.unwrap_or(1).max(1);
-	let count = listing_count(page, query.before.is_some());
-	let listing = service
-		.front_page_posts(
-			sort,
-			&ListingQuery {
-				after: query.after,
-				before: query.before,
-				count: Some(count),
-				limit: Some(PAGE_SIZE),
-				time,
-				..ListingQuery::default()
-			},
-		)
-		.await?;
+	let (sort, sort_name) = parse_post_sort(query.sort.as_deref(), false)?;
+	let (time, time_name) = parse_time(sort == PostSort::Top, query.t.as_deref())?;
+	let (listing_query, page) = query.listing(time);
+	let listing = service.front_page_posts(sort, &listing_query).await?;
 	let before = listing
 		.data
 		.before
@@ -116,18 +130,9 @@ pub async fn subreddit_feed(
 	Path(subreddit): Path<String>,
 	Query(query): Query<FeedQuery>,
 ) -> Result<SubredditTemplate, AppError> {
-	let (sort, sort_name) = parse_subreddit_sort(query.sort.as_deref())?;
-	let (time, time_name) = parse_feed_time(sort, query.t.as_deref())?;
-	let page = query.page.unwrap_or(1).max(1);
-	let count = listing_count(page, query.before.is_some());
-	let listing_query = ListingQuery {
-		after: query.after,
-		before: query.before,
-		count: Some(count),
-		limit: Some(PAGE_SIZE),
-		time,
-		..ListingQuery::default()
-	};
+	let (sort, sort_name) = parse_post_sort(query.sort.as_deref(), true)?;
+	let (time, time_name) = parse_time(sort == PostSort::Top, query.t.as_deref())?;
+	let (listing_query, page) = query.listing(time);
 	let (listing, community) = tokio::try_join!(service.subreddit_posts(&subreddit, sort, &listing_query), service.subreddit_about(&subreddit),)?;
 	let before = listing
 		.data
@@ -200,18 +205,10 @@ async fn user_page(
 	section: UserSection,
 ) -> Result<UserTemplate, AppError> {
 	let (sort, sort_name) = parse_user_sort(query.sort.as_deref())?;
-	let (time, time_name) = parse_user_time(sort, query.t.as_deref())?;
-	let page = query.page.unwrap_or(1).max(1);
-	let count = listing_count(page, query.before.is_some());
+	let (time, time_name) = parse_time(sort == UserHistorySort::Top, query.t.as_deref())?;
+	let (listing, page) = query.listing(time);
 	let history_query = UserHistoryQuery {
-		listing: ListingQuery {
-			after: query.after,
-			before: query.before,
-			count: Some(count),
-			limit: Some(PAGE_SIZE),
-			time,
-			..ListingQuery::default()
-		},
+		listing,
 		sort: Some(sort),
 		..UserHistoryQuery::default()
 	};
@@ -362,7 +359,7 @@ pub async fn post_comments(
 	State(media): State<MediaProxy>,
 	State(image_display): State<ImageDisplay>,
 	State(features): State<WebFeatures>,
-	Path(article): Path<String>,
+	Path(path): Path<PostPath>,
 	Query(query): Query<PostQuery>,
 ) -> Result<PostTemplate, AppError> {
 	post_page(
@@ -373,134 +370,9 @@ pub async fn post_comments(
 			image_display,
 			features,
 		},
-		None,
-		article,
-		None,
-		query,
-	)
-	.await
-}
-
-pub async fn subreddit_post_comments(
-	State(service): State<RedditService>,
-	State(signer): State<MediaSigner>,
-	State(media): State<MediaProxy>,
-	State(image_display): State<ImageDisplay>,
-	State(features): State<WebFeatures>,
-	Path((subreddit, article)): Path<(String, String)>,
-	Query(query): Query<PostQuery>,
-) -> Result<PostTemplate, AppError> {
-	post_page(
-		service,
-		signer,
-		PostMedia {
-			video: media,
-			image_display,
-			features,
-		},
-		Some(subreddit),
-		article,
-		None,
-		query,
-	)
-	.await
-}
-
-pub async fn post_permalink(
-	State(service): State<RedditService>,
-	State(signer): State<MediaSigner>,
-	State(media): State<MediaProxy>,
-	State(image_display): State<ImageDisplay>,
-	State(features): State<WebFeatures>,
-	Path((article, _slug)): Path<(String, String)>,
-	Query(query): Query<PostQuery>,
-) -> Result<PostTemplate, AppError> {
-	post_page(
-		service,
-		signer,
-		PostMedia {
-			video: media,
-			image_display,
-			features,
-		},
-		None,
-		article,
-		None,
-		query,
-	)
-	.await
-}
-
-pub async fn post_comment_permalink(
-	State(service): State<RedditService>,
-	State(signer): State<MediaSigner>,
-	State(media): State<MediaProxy>,
-	State(image_display): State<ImageDisplay>,
-	State(features): State<WebFeatures>,
-	Path((article, _slug, comment)): Path<(String, String, String)>,
-	Query(query): Query<PostQuery>,
-) -> Result<PostTemplate, AppError> {
-	post_page(
-		service,
-		signer,
-		PostMedia {
-			video: media,
-			image_display,
-			features,
-		},
-		None,
-		article,
-		Some(comment),
-		query,
-	)
-	.await
-}
-
-pub async fn subreddit_post_permalink(
-	State(service): State<RedditService>,
-	State(signer): State<MediaSigner>,
-	State(media): State<MediaProxy>,
-	State(image_display): State<ImageDisplay>,
-	State(features): State<WebFeatures>,
-	Path((subreddit, article, _slug)): Path<(String, String, String)>,
-	Query(query): Query<PostQuery>,
-) -> Result<PostTemplate, AppError> {
-	post_page(
-		service,
-		signer,
-		PostMedia {
-			video: media,
-			image_display,
-			features,
-		},
-		Some(subreddit),
-		article,
-		None,
-		query,
-	)
-	.await
-}
-
-pub async fn subreddit_post_comment_permalink(
-	State(service): State<RedditService>,
-	State(signer): State<MediaSigner>,
-	State(media): State<MediaProxy>,
-	State(image_display): State<ImageDisplay>,
-	State(features): State<WebFeatures>,
-	Path((subreddit, article, _slug, comment)): Path<(String, String, String, String)>,
-	Query(query): Query<PostQuery>,
-) -> Result<PostTemplate, AppError> {
-	post_page(
-		service,
-		signer,
-		PostMedia {
-			video: media,
-			image_display,
-			features,
-		},
-		Some(subreddit),
-		article,
-		Some(comment),
+		path.subreddit,
+		path.article,
+		path.comment,
 		query,
 	)
 	.await
@@ -546,15 +418,7 @@ pub async fn video_player(
 	State(media): State<MediaProxy>,
 	Query(query): Query<VideoPlayerQuery>,
 ) -> Result<VideoPlayerTemplate, AppError> {
-	let post = service
-		.posts_by_id(&format!("t3_{}", query.id))
-		.await?
-		.data
-		.children
-		.into_iter()
-		.find(|thing| thing.data.id == query.id)
-		.ok_or(AppError::PostNotFound)?
-		.data;
+	let post = post_by_id(&service, &query.id).await?;
 	if !is_external_video(&post) {
 		return Err(AppError::NotExternalVideo);
 	}
@@ -569,15 +433,7 @@ pub async fn gallery(
 	State(image_display): State<ImageDisplay>,
 	Path((article, index)): Path<(String, usize)>,
 ) -> Result<GalleryTemplate, AppError> {
-	let post = service
-		.posts_by_id(&format!("t3_{article}"))
-		.await?
-		.data
-		.children
-		.into_iter()
-		.next()
-		.ok_or(AppError::PostNotFound)?
-		.data;
+	let post = post_by_id(&service, &article).await?;
 	Ok(GalleryTemplate {
 		gallery: gallery_view(&post, &signer, image_display, index).ok_or(AppError::PostNotFound)?,
 	})
@@ -590,18 +446,22 @@ pub async fn post_content(
 	State(image_display): State<ImageDisplay>,
 	Path(article): Path<String>,
 ) -> Result<PostContentTemplate, AppError> {
-	let post = service
-		.posts_by_id(&format!("t3_{article}"))
+	let post = post_by_id(&service, &article).await?;
+	let mut post = post_view(&post, &signer, media.video_allowed(&post.url), image_display);
+	post.hide_content = false;
+	Ok(PostContentTemplate { post })
+}
+
+async fn post_by_id(service: &RedditService, id: &str) -> Result<Post, AppError> {
+	service
+		.posts_by_id(&format!("t3_{id}"))
 		.await?
 		.data
 		.children
 		.into_iter()
-		.next()
-		.ok_or(AppError::PostNotFound)?
-		.data;
-	let mut post = post_view(&post, &signer, media.video_allowed(&post.url), image_display);
-	post.hide_content = false;
-	Ok(PostContentTemplate { post })
+		.find(|thing| thing.data.id == id)
+		.map(|thing| thing.data)
+		.ok_or(AppError::PostNotFound)
 }
 
 async fn post_page(
@@ -625,15 +485,7 @@ async fn post_page(
 		..CommentQuery::default()
 	};
 	let (post, comment_tree, result_count) = if let Some(search) = &search {
-		let post = service
-			.posts_by_id(&format!("t3_{article}"))
-			.await?
-			.data
-			.children
-			.into_iter()
-			.next()
-			.ok_or(AppError::PostNotFound)?
-			.data;
+		let post = post_by_id(&service, &article).await?;
 		let comments = service
 			.search_post_comments(&post.subreddit, &article, &ThreadCommentSearchQuery { query: search.clone(), sort })
 			.await?;
@@ -668,29 +520,19 @@ async fn post_page(
 	})
 }
 
-fn parse_sort(value: Option<&str>) -> Result<(PostSort, &'static str), AppError> {
+fn parse_post_sort(value: Option<&str>, allow_controversial: bool) -> Result<(PostSort, &'static str), AppError> {
 	match value.unwrap_or("hot") {
 		"hot" => Ok((PostSort::Hot, "hot")),
 		"new" => Ok((PostSort::New, "new")),
 		"rising" => Ok((PostSort::Rising, "rising")),
 		"top" => Ok((PostSort::Top, "top")),
+		"controversial" if allow_controversial => Ok((PostSort::Controversial, "controversial")),
 		_ => Err(AppError::InvalidSort),
 	}
 }
 
-fn parse_subreddit_sort(value: Option<&str>) -> Result<(PostSort, &'static str), AppError> {
-	match value.unwrap_or("hot") {
-		"hot" => Ok((PostSort::Hot, "hot")),
-		"new" => Ok((PostSort::New, "new")),
-		"rising" => Ok((PostSort::Rising, "rising")),
-		"top" => Ok((PostSort::Top, "top")),
-		"controversial" => Ok((PostSort::Controversial, "controversial")),
-		_ => Err(AppError::InvalidSort),
-	}
-}
-
-fn parse_feed_time(sort: PostSort, value: Option<&str>) -> Result<(Option<ListingTime>, &'static str), AppError> {
-	if sort != PostSort::Top {
+fn parse_time(top_sort: bool, value: Option<&str>) -> Result<(Option<ListingTime>, &'static str), AppError> {
+	if !top_sort {
 		return if value.is_none() { Ok((None, "day")) } else { Err(AppError::InvalidFeedTime) };
 	}
 
@@ -723,21 +565,5 @@ fn parse_user_sort(value: Option<&str>) -> Result<(UserHistorySort, &'static str
 		"top" => Ok((UserHistorySort::Top, "top")),
 		"controversial" => Ok((UserHistorySort::Controversial, "controversial")),
 		_ => Err(AppError::InvalidSort),
-	}
-}
-
-fn parse_user_time(sort: UserHistorySort, value: Option<&str>) -> Result<(Option<ListingTime>, &'static str), AppError> {
-	if sort != UserHistorySort::Top {
-		return if value.is_none() { Ok((None, "day")) } else { Err(AppError::InvalidFeedTime) };
-	}
-
-	match value.unwrap_or("day") {
-		"hour" => Ok((Some(ListingTime::Hour), "hour")),
-		"day" => Ok((Some(ListingTime::Day), "day")),
-		"week" => Ok((Some(ListingTime::Week), "week")),
-		"month" => Ok((Some(ListingTime::Month), "month")),
-		"year" => Ok((Some(ListingTime::Year), "year")),
-		"all" => Ok((Some(ListingTime::All), "all")),
-		_ => Err(AppError::InvalidFeedTime),
 	}
 }

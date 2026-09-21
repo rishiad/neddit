@@ -6,12 +6,11 @@ use clap::Parser;
 use neddit::config::{Config, LogFormat, LoggingConfig};
 use neddit_api::{
 	client::RedditClient,
-	media::MediaSigner,
+	media::{video::VideoResolver, MediaSigner},
 	server,
 	server::MediaProxy,
 	service::{ContentPolicy, RedditService},
 	storage::{Cache, Shortlinks},
-	video::VideoResolver,
 };
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;

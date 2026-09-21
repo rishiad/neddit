@@ -8,9 +8,9 @@ use ammonia::{Builder, UrlRelative};
 use askama::Template;
 use askama_web::WebTemplate;
 
+use neddit_api::media::video::VideoPlayback;
 use neddit_api::media::MediaSigner;
 use neddit_api::models::{Comment, CommentChild, CommentReplies, More, Post, PublicThing, Subreddit, User, WikiPage, WikiPageListing};
-use neddit_api::video::VideoPlayback;
 use serde_json::Value;
 use url::{form_urlencoded, Url};
 
@@ -390,7 +390,7 @@ fn feed_item_with_video(post: &Post, signer: &MediaSigner, video_enabled: bool) 
 		let mut query = form_urlencoded::Serializer::new(String::new());
 		query.append_pair("id", &post.id);
 		item.video = Some(VideoView {
-			player_url: format!("/video/player?{}", query.finish()),
+			player_url: format!("/media/video/player?{}", query.finish()),
 			poster: preview_url(post).and_then(|url| signer.signed_media_url(url)),
 			source: None,
 		});

@@ -10,6 +10,8 @@ use std::{
 use thiserror::Error;
 use url::{Host, Url};
 
+pub mod video;
+
 type HmacSha256 = Hmac<Sha256>;
 
 static ABSOLUTE_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?i)(?:https?:)?//[^\s<>\"']+"#).unwrap());
@@ -443,4 +445,3 @@ pub enum MediaSignerLoadError {
 	#[error(transparent)]
 	InvalidSecret(#[from] MediaUrlError),
 }
-

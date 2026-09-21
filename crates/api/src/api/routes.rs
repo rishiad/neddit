@@ -175,7 +175,7 @@ async fn subreddit_default(state: State<RedditService>, path: Path<String>, quer
 
 #[utoipa::path(
 	get,
-	path = "/api/morechildren",
+	path = "/morechildren",
 	description = MORE_CHILDREN,
 	params(MoreChildrenQuery),
 	responses(

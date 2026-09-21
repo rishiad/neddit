@@ -3,7 +3,7 @@ use crate::parsing::wiki::{parse_wiki_discussions, parse_wiki_page, parse_wiki_p
 use crate::service::query_codec;
 use crate::service::reddit::{invalid_parameter, validate_listing_query, validate_subreddit, validate_wiki_listing_query, with_query};
 use crate::service::sanitize::clear_listing_modhash;
-use crate::service::{ListingQuery, RedditService, ServiceError, WikiPageQuery};
+use crate::service::{ListingQuery, RedditService, ServiceError};
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use uuid::Uuid;
 
@@ -76,3 +76,16 @@ fn validate_wiki_page_query(query: &WikiPageQuery) -> Result<(), ServiceError> {
 	}
 	Ok(())
 }
+
+mod wiki_page_query {
+	use utoipa::IntoParams;
+
+	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
+	#[into_params(parameter_in = Query)]
+	pub struct WikiPageQuery {
+		pub v: Option<String>,
+		pub v2: Option<String>,
+	}
+}
+
+pub use wiki_page_query::WikiPageQuery;

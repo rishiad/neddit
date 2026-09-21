@@ -1,3 +1,4 @@
+#![feature(ip)]
 #![forbid(unsafe_code)]
 
 pub mod api;
@@ -10,4 +11,3 @@ pub mod search;
 pub mod server;
 pub mod service;
 pub mod storage;
-pub mod video;

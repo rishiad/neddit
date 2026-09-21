@@ -7,7 +7,7 @@ use percent_encoding::{percent_encode, CONTROLS};
 use serde_json::Value;
 use std::{
 	io,
-	net::{IpAddr, Ipv4Addr, Ipv6Addr},
+	net::{IpAddr, Ipv4Addr},
 	result::Result,
 	time::Duration,
 };
@@ -52,7 +52,7 @@ impl Resolve for PublicDns {
 		let host = name.as_str().to_owned();
 		Box::pin(async move {
 			let addresses = tokio::net::lookup_host((host.as_str(), 0)).await?.collect::<Vec<_>>();
-			if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
+			if addresses.is_empty() || addresses.iter().any(|address| !address.ip().is_global()) {
 				return Err(io::Error::other("DNS name resolved outside the public internet").into());
 			}
 			Ok(Box::new(addresses.into_iter()) as Addrs)
@@ -60,47 +60,7 @@ impl Resolve for PublicDns {
 	}
 }
 
-pub(crate) fn is_public_ip(address: IpAddr) -> bool {
-	match address {
-		IpAddr::V4(address) => is_public_ipv4(address),
-		IpAddr::V6(address) => is_public_ipv6(address),
-	}
-}
-
-fn is_public_ipv4(address: Ipv4Addr) -> bool {
-	let [a, b, c, _] = address.octets();
-	!(a == 0
-		|| a == 10
-		|| a == 127
-		|| (a == 100 && (64..=127).contains(&b))
-		|| (a == 169 && b == 254)
-		|| (a == 172 && (16..=31).contains(&b))
-		|| (a == 192 && b == 0 && c == 0)
-		|| (a == 192 && b == 0 && c == 2)
-		|| (a == 192 && b == 88 && c == 99)
-		|| (a == 192 && b == 168)
-		|| (a == 198 && (b == 18 || b == 19))
-		|| (a == 198 && b == 51 && c == 100)
-		|| (a == 203 && b == 0 && c == 113)
-		|| a >= 224)
-}
-
-fn is_public_ipv6(address: Ipv6Addr) -> bool {
-	if let Some(address) = address.to_ipv4() {
-		return is_public_ipv4(address);
-	}
-	let segments = address.segments();
-	segments[0] & 0xe000 == 0x2000
-		&& !address.is_unspecified()
-		&& !address.is_loopback()
-		&& !address.is_multicast()
-		&& !address.is_unique_local()
-		&& !address.is_unicast_link_local()
-		&& !(segments[0] == 0x2001 && segments[1] == 0x0db8)
-}
-
 impl RedditClient {
-
 	pub async fn new() -> Result<Self, ClientError> {
 		let http = Self::build_http_client()?;
 		let external_http = Self::build_external_http_client()?;
@@ -511,4 +471,3 @@ fn is_safe_proxy_header(name: &str) -> bool {
 			| "location"
 	)
 }
-

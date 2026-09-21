@@ -1,3 +1,4 @@
+use super::{CommentChild, Listing, Thing};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use utoipa::ToSchema;
@@ -29,3 +30,9 @@ pub struct Post {
 	#[serde(flatten)]
 	pub extra: Map<String, Value>,
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct PostComments(pub Listing<Thing<Post>>, pub Listing<CommentChild>);
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PostDuplicates(pub Listing<Thing<Post>>, pub Listing<Thing<Post>>);

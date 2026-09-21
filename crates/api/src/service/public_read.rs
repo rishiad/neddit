@@ -7,7 +7,7 @@ use crate::parsing::trophy::parse_trophy_list;
 use crate::service::query_codec;
 use crate::service::reddit::{invalid_parameter, validate_listing_query, validate_subreddit, validate_username, with_query};
 use crate::service::sanitize::{clear_listing_modhash, clear_public_listing_modhash};
-use crate::service::{InfoQuery, RedditService, SearchQuery, ServiceError, UserDirectorySort, UserHistoryQuery, UserSearchQuery};
+use crate::service::{RedditService, ServiceError};
 use url::Url;
 use uuid::Uuid;
 
@@ -176,3 +176,221 @@ fn validate_user_search_query(query: &UserSearchQuery) -> Result<(), ServiceErro
 	}
 	Ok(())
 }
+
+mod info_query {
+	use utoipa::IntoParams;
+
+	#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize, IntoParams)]
+	#[into_params(parameter_in = Query)]
+	pub struct InfoQuery {
+		#[param(rename = "id", explode = false, required = false)]
+		#[serde(rename = "id", default, with = "crate::service::query_codec::comma", skip_serializing_if = "Vec::is_empty")]
+		pub ids: Vec<String>,
+		#[param(rename = "sr_name", explode = false, required = false)]
+		#[serde(rename = "sr_name", default, with = "crate::service::query_codec::comma", skip_serializing_if = "Vec::is_empty")]
+		pub subreddit_names: Vec<String>,
+		pub url: Option<String>,
+	}
+}
+
+mod search_query {
+	use crate::service::ListingQuery;
+	use std::{fmt, str::FromStr};
+	use utoipa::{IntoParams, ToSchema};
+
+	#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize, IntoParams)]
+	#[into_params(parameter_in = Query)]
+	pub struct SearchQuery {
+		#[param(ignore)]
+		#[serde(flatten)]
+		pub listing: ListingQuery,
+		#[param(max_length = 5)]
+		pub category: Option<String>,
+		pub include_facets: Option<bool>,
+		#[serde(default, with = "crate::service::query_codec::option_on_off", skip_serializing_if = "Option::is_none")]
+		pub include_over_18: Option<bool>,
+		#[param(rename = "q", max_length = 512)]
+		#[serde(rename = "q")]
+		pub query: String,
+		pub restrict_sr: Option<bool>,
+		#[param(inline)]
+		pub sort: Option<SearchSort>,
+		#[param(rename = "type", explode = false, inline, required = false)]
+		#[serde(rename = "type", default, with = "crate::service::query_codec::comma", skip_serializing_if = "Vec::is_empty")]
+		pub result_types: Vec<SearchResultType>,
+	}
+
+	#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize, ToSchema)]
+	#[schema(rename_all = "lowercase")]
+	#[serde(rename_all = "lowercase")]
+	pub enum SearchSort {
+		Relevance,
+		Hot,
+		Top,
+		New,
+		Comments,
+	}
+
+	#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize, ToSchema)]
+	pub enum SearchResultType {
+		#[schema(rename = "sr")]
+		#[serde(rename = "sr")]
+		Subreddit,
+		#[schema(rename = "link")]
+		#[serde(rename = "link")]
+		Post,
+		#[schema(rename = "user")]
+		#[serde(rename = "user")]
+		User,
+	}
+
+	impl SearchResultType {
+		pub(super) const fn as_str(self) -> &'static str {
+			match self {
+				Self::Subreddit => "sr",
+				Self::Post => "link",
+				Self::User => "user",
+			}
+		}
+	}
+
+	impl fmt::Display for SearchResultType {
+		fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+			formatter.write_str(self.as_str())
+		}
+	}
+
+	impl FromStr for SearchResultType {
+		type Err = &'static str;
+
+		fn from_str(value: &str) -> Result<Self, Self::Err> {
+			match value {
+				"sr" => Ok(Self::Subreddit),
+				"link" => Ok(Self::Post),
+				"user" => Ok(Self::User),
+				_ => Err("unknown search result type"),
+			}
+		}
+	}
+}
+
+mod user_directory_sort {
+	#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+	pub enum UserDirectorySort {
+		New,
+		Popular,
+	}
+
+	impl UserDirectorySort {
+		pub(super) const fn as_str(self) -> &'static str {
+			match self {
+				Self::New => "new",
+				Self::Popular => "popular",
+			}
+		}
+	}
+}
+
+mod user_history_query {
+	use crate::service::ListingQuery;
+	use utoipa::{IntoParams, ToSchema};
+
+	#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize, IntoParams)]
+	#[into_params(parameter_in = Query)]
+	pub struct UserHistoryQuery {
+		#[param(ignore)]
+		#[serde(flatten)]
+		pub listing: ListingQuery,
+		#[param(minimum = 2, maximum = 10)]
+		pub context: Option<u8>,
+		#[param(inline)]
+		pub show: Option<UserHistoryShow>,
+		#[param(inline)]
+		pub sort: Option<UserHistorySort>,
+		#[param(rename = "type", inline)]
+		#[serde(rename = "type")]
+		pub content_type: Option<UserHistoryType>,
+	}
+
+	#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize, ToSchema)]
+	#[schema(rename_all = "lowercase")]
+	#[serde(rename_all = "lowercase")]
+	pub enum UserHistoryShow {
+		Given,
+	}
+
+	#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize, ToSchema)]
+	#[schema(rename_all = "lowercase")]
+	#[serde(rename_all = "lowercase")]
+	pub enum UserHistorySort {
+		Hot,
+		New,
+		Top,
+		Controversial,
+	}
+
+	#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize, ToSchema)]
+	pub enum UserHistoryType {
+		#[schema(rename = "links")]
+		#[serde(rename = "links")]
+		Posts,
+		#[schema(rename = "comments")]
+		#[serde(rename = "comments")]
+		Comments,
+	}
+}
+
+mod user_search_query {
+	use crate::service::{ListingQuery, SubredditSearchSort, Typeahead};
+	use utoipa::IntoParams;
+
+	#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize, IntoParams)]
+	#[into_params(parameter_in = Query)]
+	pub struct UserSearchQuery {
+		#[param(ignore)]
+		#[serde(flatten)]
+		pub listing: ListingQuery,
+		#[param(rename = "q")]
+		#[serde(rename = "q")]
+		pub query: String,
+		pub search_query_id: Option<String>,
+		#[param(inline)]
+		pub sort: Option<SubredditSearchSort>,
+		#[param(value_type = String)]
+		pub typeahead_active: Option<Typeahead>,
+	}
+}
+
+mod subreddit_metadata {
+	use crate::models::{Sidebar, SubredditRules};
+	use crate::parsing::error::ParseError;
+	use crate::parsing::subreddit_rules::parse_subreddit_rules;
+	use crate::service::reddit::validate_subreddit;
+	use crate::service::{RedditService, ServiceError};
+
+	impl RedditService {
+		pub async fn subreddit_rules(&self, subreddit: &str) -> Result<SubredditRules, ServiceError> {
+			validate_subreddit(subreddit)?;
+			self.require_safe_subreddit(subreddit).await?;
+			let json = self.client.json(format!("/r/{subreddit}/about/rules")).await?;
+			Ok(parse_subreddit_rules(&json)?)
+		}
+
+		pub async fn subreddit_sidebar(&self, subreddit: &str) -> Result<Sidebar, ServiceError> {
+			let subreddit = self.subreddit_about(subreddit).await?;
+			Ok(Sidebar {
+				description: subreddit.data.description,
+				description_html: subreddit.data.description_html.ok_or(ParseError::InvalidField {
+					entity: "subreddit",
+					field: "description_html",
+				})?,
+			})
+		}
+	}
+}
+
+pub use info_query::InfoQuery;
+pub use search_query::{SearchQuery, SearchResultType, SearchSort};
+pub use user_directory_sort::UserDirectorySort;
+pub use user_history_query::{UserHistoryQuery, UserHistoryShow, UserHistorySort, UserHistoryType};
+pub use user_search_query::UserSearchQuery;

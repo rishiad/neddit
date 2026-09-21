@@ -73,7 +73,7 @@ async fn search_subreddit(State(service): State<RedditService>, Path(subreddit):
 
 #[utoipa::path(
 	get,
-	path = "/api/info",
+	path = "/info",
 	description = INFO,
 	params(InfoQuery),
 	responses(
@@ -192,7 +192,7 @@ async fn user_comments(State(service): State<RedditService>, Path(username): Pat
 
 #[utoipa::path(
 	get,
-	path = "/api/v1/user/{username}/trophies",
+	path = "/v1/user/{username}/trophies",
 	description = TROPHIES,
 	params(("username" = String, Path)),
 	responses(

@@ -7,25 +7,24 @@ rust-version.workspace = true
 caseless = "=0.2.2"
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 unicode-normalization = "=0.1.25"
-axum = "0.8.4"
+axum.workspace = true
 regex = "1.10.2"
 scraper = "0.25.0"
-serde = { version = "1.0.193", features = ["derive"] }
+serde.workspace = true
 futures-lite = "2.2.0"
 percent-encoding = "2.3.1"
-serde_json = "1.0.133"
+serde_json.workspace = true
 serde_urlencoded = "0.7.1"
-tokio = { version = "1.44.2", features = ["full"] }
-thiserror = "2.0.12"
-tower = { version = "0.5.2", features = ["util"] }
-tower-http = { version = "0.6.6", features = ["compression-br", "compression-gzip"] }
+tokio = { workspace = true, features = ["full"] }
+thiserror.workspace = true
+tower-http.workspace = true
 utoipa = { version = "5.5.0", features = ["axum_extras"] }
 utoipa-axum = "0.2.0"
-url = "2.5.0"
+url.workspace = true
 uuid = { version = "1.6.1", features = ["v4"] }
 base64 = "0.22.1"
 fastrand = "2.0.1"
-tracing = "0.1.44"
+tracing.workspace = true
 async-recursion = "1.1.1"
 tegen = "0.1.4"
 fake_user_agent = "0.2.2"

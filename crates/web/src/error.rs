@@ -5,8 +5,8 @@ use axum::{
 	middleware::Next,
 	response::{Html, IntoResponse, Response},
 };
+use neddit_api::media::video::VideoError;
 use neddit_api::service::ServiceError;
-use neddit_api::video::VideoError;
 use thiserror::Error;
 
 use crate::WebFeatures;

@@ -104,13 +104,13 @@ pub fn router(service: RedditService, media: MediaProxy, image_display: ImageDis
 		.route("/r/{subreddit}/wiki/", get(app::wiki_root))
 		.route("/r/{subreddit}/wiki/{*page}", get(app::wiki_page))
 		.route("/comments/{article}", get(app::post_comments))
-		.route("/comments/{article}/{slug}", get(app::post_permalink))
-		.route("/comments/{article}/{slug}/", get(app::post_permalink))
-		.route("/comments/{article}/{slug}/{comment}", get(app::post_comment_permalink))
-		.route("/r/{subreddit}/comments/{article}", get(app::subreddit_post_comments))
-		.route("/r/{subreddit}/comments/{article}/{slug}", get(app::subreddit_post_permalink))
-		.route("/r/{subreddit}/comments/{article}/{slug}/", get(app::subreddit_post_permalink))
-		.route("/r/{subreddit}/comments/{article}/{slug}/{comment}", get(app::subreddit_post_comment_permalink));
+		.route("/comments/{article}/{slug}", get(app::post_comments))
+		.route("/comments/{article}/{slug}/", get(app::post_comments))
+		.route("/comments/{article}/{slug}/{comment}", get(app::post_comments))
+		.route("/r/{subreddit}/comments/{article}", get(app::post_comments))
+		.route("/r/{subreddit}/comments/{article}/{slug}", get(app::post_comments))
+		.route("/r/{subreddit}/comments/{article}/{slug}/", get(app::post_comments))
+		.route("/r/{subreddit}/comments/{article}/{slug}/{comment}", get(app::post_comments));
 	if custom_feeds_enabled {
 		app = app
 			.route(
@@ -121,7 +121,7 @@ pub fn router(service: RedditService, media: MediaProxy, image_display: ImageDis
 			.route("/f/{id}", get(custom_feed::saved));
 	}
 	if video_enabled {
-		app = app.route("/video/player", get(app::video_player));
+		app = app.route("/media/video/player", get(app::video_player));
 	}
 	let app = app
 		.with_state(state)

@@ -9,10 +9,6 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot, Mutex, OwnedMutexGuard};
 
-const ALPHABET: &[char] = &[
-	'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h',
-	'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-];
 const MAX_ENTRY_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
@@ -144,7 +140,7 @@ pub(crate) fn fingerprint(value: &[u8]) -> String {
 }
 
 pub(crate) fn id(length: usize) -> String {
-	nanoid::nanoid!(length, ALPHABET)
+	nanoid::nanoid!(length)
 }
 
 /// Fixed stripes bound lock memory even for adversarial unique requests.

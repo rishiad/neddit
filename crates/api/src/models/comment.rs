@@ -1,4 +1,4 @@
-use crate::models::CommentReplies;
+use super::{Listing, Thing};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use utoipa::ToSchema;
@@ -16,6 +16,33 @@ pub struct Comment {
 	pub created_utc: f64,
 	pub edited: Value,
 	pub replies: CommentReplies,
+	#[serde(flatten)]
+	pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(untagged)]
+pub enum CommentChild {
+	Comment(Thing<Comment>),
+	More(Thing<More>),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(untagged)]
+pub enum CommentReplies {
+	Empty(String),
+	#[schema(no_recursion)]
+	Listing(Box<Listing<CommentChild>>),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct More {
+	pub id: String,
+	pub name: String,
+	pub parent_id: String,
+	pub count: u64,
+	pub children: Vec<String>,
+	pub depth: Option<u64>,
 	#[serde(flatten)]
 	pub extra: Map<String, Value>,
 }

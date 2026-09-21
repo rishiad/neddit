@@ -29,8 +29,8 @@ const EXTRACT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_EXTRACTORS: usize = 2;
 const MAX_STDOUT: usize = 1024 * 1024;
 const MAX_STDERR: usize = 64 * 1024;
-const VIDEO_ROUTE: &str = "/video/media";
-const VIDEO_SCOPE: &str = "external-video";
+const VIDEO_ROUTE: &str = "/media/video";
+const SIGNING_SCOPE: &str = "external-video";
 const OUTPUT_TEMPLATE: &str = concat!(
 	"{\"id\":%(id)j,\"extractor\":%(extractor_key)j,\"title\":%(title|null)j,\"duration\":%(duration|null)j,\"thumbnail\":%(thumbnail|null)j,\"format\":{",
 	"\"format_id\":%(format_id|null)j,\"url\":%(url|null)j,\"ext\":%(ext|null)j,\"protocol\":%(protocol|null)j,",
@@ -135,7 +135,7 @@ async fn validate_public_resolution(url: &Url) -> Result<(), VideoError> {
 	let mut found = false;
 	for address in addresses {
 		found = true;
-		if !crate::client::is_public_ip(address.ip()) {
+		if !address.ip().is_global() {
 			return Err(VideoError::ForbiddenTarget);
 		}
 	}
@@ -314,7 +314,7 @@ fn playback(video: ExtractedVideo, signer: &MediaSigner) -> Result<VideoPlayback
 
 	let poster = video.thumbnail.and_then(|value| Url::parse(&value).ok()).and_then(|url| {
 		validate_video_target(&url).ok()?;
-		Some(signer.scoped_url(VIDEO_ROUTE, VIDEO_SCOPE, &url))
+		Some(signer.scoped_url(VIDEO_ROUTE, SIGNING_SCOPE, &url))
 	});
 
 	Ok(VideoPlayback {
@@ -350,7 +350,7 @@ fn source(format: ExtractedFormat, signer: &MediaSigner) -> Option<(u32, VideoSo
 	Some((
 		height.unwrap_or_default(),
 		VideoSource {
-			url: signer.scoped_url(VIDEO_ROUTE, VIDEO_SCOPE, &upstream),
+			url: signer.scoped_url(VIDEO_ROUTE, SIGNING_SCOPE, &upstream),
 			format_id: format.format_id,
 			mime,
 			width,
@@ -366,7 +366,7 @@ fn finite_u32(value: Option<f64>) -> Option<u32> {
 }
 
 pub fn decode_video_target(signer: &MediaSigner, signature: &str, encoded: &str) -> Result<Url, VideoError> {
-	let target = signer.decode_scoped_target(VIDEO_SCOPE, signature, encoded)?;
+	let target = signer.decode_scoped_target(SIGNING_SCOPE, signature, encoded)?;
 	validate_video_target(&target)?;
 	Ok(target)
 }
@@ -378,7 +378,7 @@ pub fn rewrite_hls(manifest: &str, source: &Url, signer: &MediaSigner) -> Result
 fn rewrite_reference(reference: &str, source: &Url, signer: &MediaSigner) -> Result<String, VideoError> {
 	let target = source.join(reference).map_err(|_| VideoError::InvalidManifestUrl)?;
 	validate_video_target(&target)?;
-	Ok(signer.scoped_url(VIDEO_ROUTE, VIDEO_SCOPE, &target))
+	Ok(signer.scoped_url(VIDEO_ROUTE, SIGNING_SCOPE, &target))
 }
 
 #[derive(Debug, Error)]
@@ -435,4 +435,3 @@ impl IntoResponse for VideoError {
 		(status, self.to_string()).into_response()
 	}
 }
-

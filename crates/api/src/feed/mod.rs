@@ -1,7 +1,7 @@
 //! Custom post feeds with immutable definitions and bounded snapshots.
 mod ranking;
 mod shortlinks;
-pub use shortlinks::{status, Continuation, Definition, SavedFeed};
+pub use shortlinks::{Continuation, Definition, SavedFeed};
 
 use crate::{
 	models::{Listing, Post, Thing},
@@ -58,21 +58,17 @@ pub const RANKING_INPUTS: &[&str] = &[
 	"archived",
 ];
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, utoipa::IntoParams, utoipa::ToSchema)]
-#[into_params(parameter_in = Query)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Request {
 	pub q: String,
 	/// Native candidate pool: new or top. Defaults to new.
 	pub pool: Option<String>,
 	/// Reddit Top window. Defaults to all.
-	#[param(inline)]
 	pub t: Option<ListingTime>,
 	/// A named preset or numeric expression. Defaults to hot. Results use descending values.
 	pub rank: Option<String>,
-	#[param(minimum = 1, maximum = 100)]
 	pub limit: Option<u8>,
-	#[param(minimum = 1)]
 	pub page: Option<u32>,
 	/// Opaque snapshot identifier returned by the first page. Expires after 15 minutes or eviction.
 	pub cursor: Option<String>,
@@ -101,7 +97,7 @@ impl Request {
 	}
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct FeedPage {
 	pub items: Vec<Item>,
 	pub number: u32,
@@ -117,13 +113,13 @@ pub struct FeedPage {
 	pub text_profile: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Item {
 	pub post: Thing<Post>,
 	pub signals: RankingSignals,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RankingSignals {
 	pub score: i64,
 	pub upvote_ratio: f64,
@@ -148,7 +144,7 @@ pub struct RankingSignals {
 	pub rank_value: Option<f64>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RankingDescription {
 	pub name: String,
 	pub expression: Option<String>,
@@ -156,7 +152,7 @@ pub struct RankingDescription {
 	pub inputs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SourceDescription {
 	pub kind: String,
 	pub value: String,
@@ -694,4 +690,3 @@ fn extra_count(post: &Post, key: &str) -> u64 {
 fn timestamp_ns(value: DateTime<Utc>) -> i128 {
 	i128::from(value.timestamp()) * 1_000_000_000 + i128::from(value.timestamp_subsec_nanos())
 }
-

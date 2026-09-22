@@ -188,7 +188,6 @@ impl Sessions {
 		}
 		result
 	}
-
 }
 
 impl Collection {

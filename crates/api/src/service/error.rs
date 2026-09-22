@@ -1,5 +1,5 @@
 use crate::client::error::ClientError;
-use crate::parsing::error::ParseError;
+use crate::parsing::ParseError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

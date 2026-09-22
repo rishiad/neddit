@@ -136,7 +136,6 @@ pub(crate) struct OAuthHandle {
 }
 
 impl OAuthHandle {
-
 	pub(crate) async fn start(http: WreqClient) -> Result<Self, AuthError> {
 		Self::start_with_authenticator(http, Arc::new(RedditAuthenticator)).await
 	}
@@ -268,4 +267,3 @@ fn start_refresh(http: &WreqClient, authenticator: &Arc<dyn Authenticator>, refr
 fn refresh_deadline(expires_at: Instant) -> Instant {
 	expires_at.checked_sub(REFRESH_MARGIN).unwrap_or_else(Instant::now)
 }
-

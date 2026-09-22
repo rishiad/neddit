@@ -85,15 +85,14 @@ impl Definition {
 	}
 }
 
-#[derive(Default, Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
+#[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Continuation {
 	pub page: Option<u32>,
 	pub cursor: Option<String>,
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Serialize)]
 pub struct SavedFeed {
 	pub id: String,
 	pub url: String,
@@ -151,17 +150,3 @@ fn storage_error(error: storage::Error) -> Diagnostic {
 		}
 	}
 }
-
-pub fn status(error: &Diagnostic) -> axum::http::StatusCode {
-	use axum::http::StatusCode;
-	match error.code {
-		"not_found" => StatusCode::NOT_FOUND,
-		"rate_limited" => StatusCode::TOO_MANY_REQUESTS,
-		"storage_full" | "storage_unavailable" | "execution_busy" => StatusCode::SERVICE_UNAVAILABLE,
-		"invalid_cursor" => StatusCode::GONE,
-		"source_failed" => StatusCode::BAD_GATEWAY,
-		"execution_timeout" => StatusCode::GATEWAY_TIMEOUT,
-		_ => StatusCode::BAD_REQUEST,
-	}
-}
-

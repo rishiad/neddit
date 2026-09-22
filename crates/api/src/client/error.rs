@@ -32,6 +32,9 @@ pub enum ClientError {
 	#[error("Reddit returned a redirect without a Location header for `{path}`")]
 	MissingRedirectLocation { path: String },
 
+	#[error("Reddit exceeded the redirect limit for `{path}`")]
+	TooManyRedirects { path: String },
+
 	#[error("failed to receive the response body for `{path}`")]
 	Body {
 		path: String,

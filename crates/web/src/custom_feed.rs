@@ -1,5 +1,5 @@
 use crate::{
-	view::{custom_feed_item, pagination, CustomFeedTemplate, FeedPageMode, SelectChoice},
+	view::{custom_feed_item, listing_time_choices, pagination, CustomFeedTemplate, FeedPageMode, SelectChoice},
 	WebFeatures,
 };
 use askama::Template;
@@ -13,7 +13,7 @@ use axum::{
 use neddit_api::{
 	feed::{expand_rank_preset, Continuation, FeedPage, Request},
 	media::MediaSigner,
-	service::{ListingTime, RedditService},
+	service::RedditService,
 };
 
 #[derive(Template, WebTemplate)]
@@ -45,14 +45,14 @@ pub async fn create(State(service): State<RedditService>, State(signer): State<M
 	}
 	match service.save_feed(&request).await {
 		Ok(feed) => render(service, signer, request, "/feeds", feed.url).await,
-		Err(error) => (neddit_api::feed::status(&error), error.to_string()).into_response(),
+		Err(error) => (error.status(), error.to_string()).into_response(),
 	}
 }
 
 pub async fn saved(State(service): State<RedditService>, State(signer): State<MediaSigner>, Path(id): Path<String>, Query(continuation): Query<Continuation>) -> Response {
 	match service.saved_feed(&id, continuation).await {
 		Ok(request) => render(service, signer, request, &format!("/f/{id}"), String::new()).await,
-		Err(error) => (neddit_api::feed::status(&error), error.to_string()).into_response(),
+		Err(error) => (error.status(), error.to_string()).into_response(),
 	}
 }
 
@@ -81,7 +81,7 @@ async fn render(service: RedditService, signer: MediaSigner, request: Request, b
 		}
 		Err(error) => {
 			view.diagnostic = error.to_string();
-			neddit_api::feed::status(&error)
+			error.status()
 		}
 	};
 	(status, view).into_response()
@@ -117,17 +117,7 @@ fn time_choices(request: &Request) -> Vec<SelectChoice> {
 	if request.pool() != "top" {
 		return Vec::new();
 	}
-	choices(
-		&[
-			(ListingTime::Hour.as_str(), "Past hour"),
-			(ListingTime::Day.as_str(), "Past 24 hours"),
-			(ListingTime::Week.as_str(), "Past week"),
-			(ListingTime::Month.as_str(), "Past month"),
-			(ListingTime::Year.as_str(), "Past year"),
-			(ListingTime::All.as_str(), "All time"),
-		],
-		request.time().as_str(),
-	)
+	listing_time_choices(request.time().as_str())
 }
 
 fn form(request: &Request, nsfw_available: bool, show_builder: bool) -> CustomFeedTemplate {

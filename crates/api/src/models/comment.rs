@@ -1,9 +1,8 @@
 use super::{Listing, Thing};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use utoipa::ToSchema;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Comment {
 	pub id: String,
 	pub name: String,
@@ -20,22 +19,21 @@ pub struct Comment {
 	pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CommentChild {
 	Comment(Thing<Comment>),
 	More(Thing<More>),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CommentReplies {
 	Empty(String),
-	#[schema(no_recursion)]
 	Listing(Box<Listing<CommentChild>>),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct More {
 	pub id: String,
 	pub name: String,

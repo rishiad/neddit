@@ -521,14 +521,11 @@ async fn post_page(
 }
 
 fn parse_post_sort(value: Option<&str>, allow_controversial: bool) -> Result<(PostSort, &'static str), AppError> {
-	match value.unwrap_or("hot") {
-		"hot" => Ok((PostSort::Hot, "hot")),
-		"new" => Ok((PostSort::New, "new")),
-		"rising" => Ok((PostSort::Rising, "rising")),
-		"top" => Ok((PostSort::Top, "top")),
-		"controversial" if allow_controversial => Ok((PostSort::Controversial, "controversial")),
-		_ => Err(AppError::InvalidSort),
+	let sort: PostSort = value.unwrap_or("hot").parse().map_err(|()| AppError::InvalidSort)?;
+	if sort == PostSort::Best || sort == PostSort::Controversial && !allow_controversial {
+		return Err(AppError::InvalidSort);
 	}
+	Ok((sort, sort.as_str()))
 }
 
 fn parse_time(top_sort: bool, value: Option<&str>) -> Result<(Option<ListingTime>, &'static str), AppError> {
@@ -536,34 +533,20 @@ fn parse_time(top_sort: bool, value: Option<&str>) -> Result<(Option<ListingTime
 		return if value.is_none() { Ok((None, "day")) } else { Err(AppError::InvalidFeedTime) };
 	}
 
-	match value.unwrap_or("day") {
-		"hour" => Ok((Some(ListingTime::Hour), "hour")),
-		"day" => Ok((Some(ListingTime::Day), "day")),
-		"week" => Ok((Some(ListingTime::Week), "week")),
-		"month" => Ok((Some(ListingTime::Month), "month")),
-		"year" => Ok((Some(ListingTime::Year), "year")),
-		"all" => Ok((Some(ListingTime::All), "all")),
-		_ => Err(AppError::InvalidFeedTime),
-	}
+	let time: ListingTime = value.unwrap_or("day").parse().map_err(|()| AppError::InvalidFeedTime)?;
+	Ok((Some(time), time.as_str()))
 }
 
 fn parse_comment_sort(value: Option<&str>) -> Result<(CommentSort, &'static str), AppError> {
-	match value.unwrap_or("best") {
-		"best" | "confidence" => Ok((CommentSort::Confidence, "best")),
-		"top" => Ok((CommentSort::Top, "top")),
-		"new" => Ok((CommentSort::New, "new")),
-		"old" => Ok((CommentSort::Old, "old")),
-		"controversial" => Ok((CommentSort::Controversial, "controversial")),
-		_ => Err(AppError::InvalidCommentSort),
+	let sort: CommentSort = value.unwrap_or("best").parse().map_err(|()| AppError::InvalidCommentSort)?;
+	if matches!(sort, CommentSort::Random | CommentSort::Qa | CommentSort::Live) {
+		return Err(AppError::InvalidCommentSort);
 	}
+	let name = if sort == CommentSort::Confidence { "best" } else { sort.as_str() };
+	Ok((sort, name))
 }
 
 fn parse_user_sort(value: Option<&str>) -> Result<(UserHistorySort, &'static str), AppError> {
-	match value.unwrap_or("new") {
-		"new" => Ok((UserHistorySort::New, "new")),
-		"hot" => Ok((UserHistorySort::Hot, "hot")),
-		"top" => Ok((UserHistorySort::Top, "top")),
-		"controversial" => Ok((UserHistorySort::Controversial, "controversial")),
-		_ => Err(AppError::InvalidSort),
-	}
+	let sort: UserHistorySort = value.unwrap_or("new").parse().map_err(|()| AppError::InvalidSort)?;
+	Ok((sort, sort.as_str()))
 }

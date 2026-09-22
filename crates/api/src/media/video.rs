@@ -20,7 +20,6 @@ use tokio::{
 	time::timeout,
 };
 use url::{Host, Url};
-use utoipa::ToSchema;
 
 const CACHE_TTL: Duration = Duration::from_secs(2 * 60 * 60);
 const DNS_TIMEOUT: Duration = Duration::from_secs(5);
@@ -88,7 +87,7 @@ struct ExtractedFormat {
 	http_headers: Option<HashMap<String, String>>,
 }
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize)]
 pub struct VideoPlayback {
 	pub id: String,
 	pub title: Option<String>,
@@ -97,7 +96,7 @@ pub struct VideoPlayback {
 	pub sources: Vec<VideoSource>,
 }
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize)]
 pub struct VideoSource {
 	pub url: String,
 	pub format_id: Option<String>,
@@ -135,7 +134,7 @@ async fn validate_public_resolution(url: &Url) -> Result<(), VideoError> {
 	let mut found = false;
 	for address in addresses {
 		found = true;
-		if !address.ip().is_global() {
+		if !crate::is_proxyable_ip(address.ip()) {
 			return Err(VideoError::ForbiddenTarget);
 		}
 	}

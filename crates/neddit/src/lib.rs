@@ -20,8 +20,8 @@ pub fn router(
 	};
 	if api_enabled {
 		let signer = media.signer().clone();
-		let api = api::with_reddit_urls(api::router(service, custom_feeds_enabled), signer);
-		app = app.nest("/api", server::with_middleware(api));
+		let api_routes = api::with_reddit_urls(api::router(service, custom_feeds_enabled), signer);
+		app = app.nest("/api", server::with_middleware(api_routes));
 	}
 	if web_enabled {
 		app = app.layer(middleware::from_fn(neddit_web::html_error_pages));

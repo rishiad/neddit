@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use utoipa::ToSchema;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Subreddit {
 	pub id: String,
 	pub name: String,
@@ -26,13 +25,13 @@ pub struct Subreddit {
 	pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Sidebar {
 	pub description: Option<String>,
 	pub description_html: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SubredditRules {
 	pub rules: Vec<SubredditRule>,
 	pub site_rules: Vec<String>,
@@ -42,7 +41,7 @@ pub struct SubredditRules {
 	pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SubredditRule {
 	pub created_utc: i64,
 	pub description: String,

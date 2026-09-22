@@ -1,12 +1,8 @@
-use crate::view::{pagination, search_choices, search_result, SearchTemplate, SelectChoice};
+use crate::view::{listing_time_choices, pagination, search_choices, search_result, SearchTemplate, SelectChoice};
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Query, State};
-use neddit_api::{
-	media::MediaSigner,
-	search::Request,
-	service::{ListingTime, RedditService},
-};
+use neddit_api::{media::MediaSigner, search::Request, service::RedditService};
 use url::form_urlencoded;
 
 use crate::WebFeatures;
@@ -22,21 +18,7 @@ fn time_choices(request: &Request, sorts: &[SelectChoice]) -> Vec<SelectChoice> 
 	if !sorts.iter().any(|s| s.checked && s.value == "top") {
 		return Vec::new();
 	}
-	[
-		(ListingTime::Hour, "Past hour"),
-		(ListingTime::Day, "Past 24 hours"),
-		(ListingTime::Week, "Past week"),
-		(ListingTime::Month, "Past month"),
-		(ListingTime::Year, "Past year"),
-		(ListingTime::All, "All time"),
-	]
-	.into_iter()
-	.map(|(time, label)| SelectChoice {
-		value: time.as_str(),
-		label,
-		checked: request.top_time() == time,
-	})
-	.collect()
+	listing_time_choices(request.top_time().as_str())
 }
 
 // This route has no Reddit service or OAuth dependency.

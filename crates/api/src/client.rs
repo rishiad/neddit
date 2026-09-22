@@ -2,7 +2,6 @@ pub mod error;
 mod oauth;
 
 use axum::{body::Body, http::HeaderMap, response::Response};
-use futures_lite::{future::Boxed, FutureExt};
 use percent_encoding::{percent_encode, CONTROLS};
 use serde_json::Value;
 use std::{
@@ -26,6 +25,7 @@ const REDDIT_URL_BASE: &str = "https://oauth.reddit.com";
 const REDDIT_URL_BASE_HOST: &str = "oauth.reddit.com";
 const MAX_UPSTREAM_BYTES: usize = 8 * 1024 * 1024;
 const EXTERNAL_RANGE_CHUNK: u64 = 8 * 1024 * 1024;
+const MAX_REDDIT_REDIRECTS: usize = 4;
 
 const ALTERNATIVE_REDDIT_URL_BASE: &str = "https://www.reddit.com";
 const ALTERNATIVE_REDDIT_URL_BASE_HOST: &str = "www.reddit.com";
@@ -52,7 +52,7 @@ impl Resolve for PublicDns {
 		let host = name.as_str().to_owned();
 		Box::pin(async move {
 			let addresses = tokio::net::lookup_host((host.as_str(), 0)).await?.collect::<Vec<_>>();
-			if addresses.is_empty() || addresses.iter().any(|address| !address.ip().is_global()) {
+			if addresses.is_empty() || addresses.iter().any(|address| !crate::is_proxyable_ip(address.ip())) {
 				return Err(io::Error::other("DNS name resolved outside the public internet").into());
 			}
 			Ok(Box::new(addresses.into_iter()) as Addrs)
@@ -167,36 +167,31 @@ impl RedditClient {
 
 	/// Makes a GET request to Reddit at `path`. By default, this will honor HTTP
 	/// 3xx codes Reddit returns and will automatically redirect.
-	fn reddit_get(&self, path: String) -> Boxed<Result<UpstreamResponse, ClientError>> {
-		self.request(&Method::GET, with_raw_json(path), true, REDDIT_URL_BASE, REDDIT_URL_BASE_HOST)
+	async fn reddit_get(&self, path: String) -> Result<UpstreamResponse, ClientError> {
+		self.request(&Method::GET, with_raw_json(path), true, REDDIT_URL_BASE, REDDIT_URL_BASE_HOST).await
 	}
 
-	fn reddit_html_get(&self, path: String) -> Boxed<Result<UpstreamResponse, ClientError>> {
-		self.request(&Method::GET, path, false, ALTERNATIVE_REDDIT_URL_BASE, ALTERNATIVE_REDDIT_URL_BASE_HOST)
+	async fn reddit_html_get(&self, path: String) -> Result<UpstreamResponse, ClientError> {
+		self.request(&Method::GET, path, false, ALTERNATIVE_REDDIT_URL_BASE, ALTERNATIVE_REDDIT_URL_BASE_HOST).await
 	}
 
-	/// Makes a request to Reddit. If `redirect` is `true`, `request_with_redirect`
-	/// will recurse on the URL that Reddit provides in the Location HTTP header
-	/// in its response.
-	fn request(&self, method: &'static Method, path: String, redirect: bool, base_path: &'static str, host: &'static str) -> Boxed<Result<UpstreamResponse, ClientError>> {
-		let url = format!("{base_path}{path}");
-		let client = self.clone();
-
-		async move {
-			let lease = client.oauth.acquire().await?;
+	async fn request(&self, method: &Method, mut path: String, redirect: bool, base_path: &str, host: &str) -> Result<UpstreamResponse, ClientError> {
+		for redirects in 0..=MAX_REDDIT_REDIRECTS {
+			let url = format!("{base_path}{path}");
+			let lease = self.oauth.acquire().await?;
 			let generation = lease.generation();
 			let mut headers = Vec::with_capacity(lease.headers().len() + 1);
 			headers.push(("Host", host));
 			headers.extend(lease.headers().iter().map(|(name, value)| (name.as_str(), value.as_str())));
 			fastrand::shuffle(&mut headers);
 
-			let mut builder = client.http.request(method.clone(), &url);
+			let mut builder = self.http.request(method.clone(), &url);
 			for (key, value) in headers {
 				builder = builder.header(key, value);
 			}
 			let result = builder.send().await;
 			let response = result.map_err(|source| ClientError::Request { url: url.clone(), source })?;
-			let rate_limit_reset = client.observe_rate_limit_headers(generation, &response).await;
+			let rate_limit_reset = self.observe_rate_limit_headers(generation, &response).await;
 			if !response.status().is_redirection() || !redirect {
 				return Ok(UpstreamResponse {
 					response,
@@ -212,17 +207,19 @@ impl RedditClient {
 			if location.to_str().ok() == Some(ALTERNATIVE_REDDIT_URL_BASE) {
 				return Err(ClientError::InvalidRedirect { path });
 			}
-			let new_path = percent_encode(location.as_bytes(), CONTROLS)
+			if redirects == MAX_REDDIT_REDIRECTS {
+				return Err(ClientError::TooManyRedirects { path });
+			}
+			path = percent_encode(location.as_bytes(), CONTROLS)
 				.to_string()
 				.trim_start_matches(REDDIT_URL_BASE)
 				.trim_start_matches(ALTERNATIVE_REDDIT_URL_BASE)
 				.to_string();
-			let new_path = with_raw_json(new_path);
+			path = with_raw_json(path);
 			drop(response);
 			drop(lease);
-			client.request(method, new_path, true, base_path, host).await
 		}
-		.boxed()
+		Err(ClientError::TooManyRedirects { path })
 	}
 
 	/// Make a bounded request to a Reddit WWW endpoint and return its HTML.

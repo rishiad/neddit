@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::parsing::error::ParseError;
 
-pub fn parse_thread_comment_ids(html: &str, post_id: &str) -> Result<Vec<String>, ParseError> {
+pub(crate) fn parse_thread_comment_ids(html: &str, post_id: &str) -> Result<Vec<String>, ParseError> {
 	let document = Html::parse_fragment(html);
 	let selector = Selector::parse(r#"[data-testid="search-comment"]"#).expect("static selector is valid");
 	let mut seen = HashSet::new();
@@ -48,4 +48,3 @@ pub fn parse_thread_comment_ids(html: &str, post_id: &str) -> Result<Vec<String>
 
 	Ok(ids)
 }
-

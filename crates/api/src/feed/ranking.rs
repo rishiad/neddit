@@ -465,4 +465,3 @@ fn next_end(source: &str, position: usize) -> usize {
 fn error(code: &'static str, message: impl Into<String>, span: (usize, usize)) -> Diagnostic {
 	Diagnostic::new(code, message, span)
 }
-

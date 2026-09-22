@@ -1,5 +1,5 @@
 use crate::models::{Listing, Post, Thing, WikiPage, WikiPageListing, WikiRevision};
-use crate::parsing::wiki::{parse_wiki_discussions, parse_wiki_page, parse_wiki_page_listing, parse_wiki_revisions};
+use crate::parsing::{parse_wiki_discussions, parse_wiki_page, parse_wiki_page_listing, parse_wiki_revisions};
 use crate::service::query_codec;
 use crate::service::reddit::{invalid_parameter, validate_listing_query, validate_subreddit, validate_wiki_listing_query, with_query};
 use crate::service::sanitize::clear_listing_modhash;
@@ -78,10 +78,8 @@ fn validate_wiki_page_query(query: &WikiPageQuery) -> Result<(), ServiceError> {
 }
 
 mod wiki_page_query {
-	use utoipa::IntoParams;
 
-	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
-	#[into_params(parameter_in = Query)]
+	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	pub struct WikiPageQuery {
 		pub v: Option<String>,
 		pub v2: Option<String>,

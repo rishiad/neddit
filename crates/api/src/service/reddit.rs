@@ -1,9 +1,6 @@
 use crate::client::RedditClient;
 use crate::models::{Listing, Post, PostComments, PostDuplicates, Subreddit, Thing, User};
-use crate::parsing::comments::parse_comments;
-use crate::parsing::posts::{parse_post_duplicates, parse_post_listing};
-use crate::parsing::subreddit::{parse_subreddit, parse_subreddit_listing};
-use crate::parsing::user::parse_user;
+use crate::parsing::{parse_comments, parse_post_duplicates, parse_post_listing, parse_subreddit, parse_subreddit_listing, parse_user};
 use crate::service::query_codec;
 use crate::service::sanitize::{clear_listing_modhash, clear_post_comments_modhash};
 use crate::service::{ContentPolicy, ServiceError};
@@ -64,7 +61,7 @@ impl RedditService {
 		validate_listing_query(query)?;
 		let path = with_query(format!("/r/{community}/comments"), query_codec::encode(query));
 		let json = self.client.json(path).await?;
-		let mut listing = crate::parsing::public::parse_user_comment_listing(&json)?;
+		let mut listing = crate::parsing::parse_user_comment_listing(&json)?;
 		self.content.filter_public(&mut listing);
 		Ok(listing)
 	}
@@ -357,10 +354,8 @@ pub(super) fn invalid_parameter(parameter: &'static str, value: &str) -> Service
 }
 
 mod comment_query {
-	use utoipa::{IntoParams, ToSchema};
 
-	#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
-	#[schema(rename_all = "lowercase")]
+	#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	#[serde(rename_all = "lowercase")]
 	pub enum CommentSort {
 		#[default]
@@ -375,7 +370,7 @@ mod comment_query {
 	}
 
 	impl CommentSort {
-		pub(crate) const fn as_str(self) -> &'static str {
+		pub const fn as_str(self) -> &'static str {
 			match self {
 				Self::Confidence => "confidence",
 				Self::Top => "top",
@@ -389,16 +384,32 @@ mod comment_query {
 		}
 	}
 
-	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
-	#[schema(rename_all = "lowercase")]
+	impl std::str::FromStr for CommentSort {
+		type Err = ();
+
+		fn from_str(value: &str) -> Result<Self, Self::Err> {
+			match value {
+				"best" | "confidence" => Ok(Self::Confidence),
+				"top" => Ok(Self::Top),
+				"new" => Ok(Self::New),
+				"controversial" => Ok(Self::Controversial),
+				"old" => Ok(Self::Old),
+				"random" => Ok(Self::Random),
+				"qa" => Ok(Self::Qa),
+				"live" => Ok(Self::Live),
+				_ => Err(()),
+			}
+		}
+	}
+
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	#[serde(rename_all = "lowercase")]
 	pub enum CommentTheme {
 		Default,
 		Dark,
 	}
 
-	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
-	#[into_params(parameter_in = Query)]
+	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	pub struct CommentQuery {
 		pub comment: Option<String>,
 		pub context: Option<u8>,
@@ -408,10 +419,8 @@ mod comment_query {
 		pub showmedia: Option<bool>,
 		pub showmore: Option<bool>,
 		pub showtitle: Option<bool>,
-		#[param(inline)]
 		pub sort: Option<CommentSort>,
 		pub sr_detail: Option<bool>,
-		#[param(inline)]
 		pub theme: Option<CommentTheme>,
 		pub threaded: Option<bool>,
 		pub truncate: Option<u8>,
@@ -420,43 +429,34 @@ mod comment_query {
 
 mod duplicate_query {
 	use crate::service::ListingQuery;
-	use utoipa::{IntoParams, ToSchema};
 
-	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
-	#[schema(rename_all = "snake_case")]
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	#[serde(rename_all = "snake_case")]
 	pub enum DuplicateSort {
 		NumComments,
 		New,
 	}
 
-	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
-	#[into_params(parameter_in = Query)]
+	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	pub struct DuplicateQuery {
-		#[param(ignore)]
 		#[serde(flatten)]
 		pub listing: ListingQuery,
 		pub crossposts_only: Option<bool>,
-		#[param(inline)]
 		pub sort: Option<DuplicateSort>,
-		#[param(rename = "sr")]
 		#[serde(rename = "sr")]
 		pub subreddit: Option<String>,
 	}
 }
 
 mod listing_query {
-	use utoipa::{IntoParams, ToSchema};
 
-	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
-	#[schema(rename_all = "lowercase")]
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	#[serde(rename_all = "lowercase")]
 	pub enum ListingShow {
 		All,
 	}
 
-	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ToSchema)]
-	#[schema(rename_all = "lowercase")]
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 	#[serde(rename_all = "lowercase")]
 	pub enum ListingTime {
 		Hour,
@@ -480,22 +480,32 @@ mod listing_query {
 		}
 	}
 
-	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
-	#[into_params(parameter_in = Query)]
+	impl std::str::FromStr for ListingTime {
+		type Err = ();
+
+		fn from_str(value: &str) -> Result<Self, Self::Err> {
+			match value {
+				"hour" => Ok(Self::Hour),
+				"day" => Ok(Self::Day),
+				"week" => Ok(Self::Week),
+				"month" => Ok(Self::Month),
+				"year" => Ok(Self::Year),
+				"all" => Ok(Self::All),
+				_ => Err(()),
+			}
+		}
+	}
+
+	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	pub struct ListingQuery {
 		pub after: Option<String>,
 		pub before: Option<String>,
-		#[param(minimum = 1, maximum = 100)]
 		pub limit: Option<u8>,
-		#[param(minimum = 0)]
 		pub count: Option<u32>,
-		#[param(inline)]
 		pub show: Option<ListingShow>,
-		#[param(rename = "t", inline)]
 		#[serde(rename = "t")]
 		pub time: Option<ListingTime>,
 		pub sr_detail: Option<bool>,
-		#[param(rename = "g")]
 		#[serde(rename = "g")]
 		pub geo_filter: Option<String>,
 	}
@@ -525,21 +535,35 @@ mod post_sort {
 			}
 		}
 	}
+
+	impl std::str::FromStr for PostSort {
+		type Err = ();
+
+		fn from_str(value: &str) -> Result<Self, Self::Err> {
+			match value {
+				"hot" => Ok(Self::Hot),
+				"best" => Ok(Self::Best),
+				"new" => Ok(Self::New),
+				"rising" => Ok(Self::Rising),
+				"top" => Ok(Self::Top),
+				"controversial" => Ok(Self::Controversial),
+				_ => Err(()),
+			}
+		}
+	}
 }
 
 mod subreddit_search_query {
 	use crate::service::ListingQuery;
-	use utoipa::{IntoParams, ToSchema};
 
-	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
-	#[schema(rename_all = "lowercase")]
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	#[serde(rename_all = "lowercase")]
 	pub enum SubredditSearchSort {
 		Relevance,
 		Activity,
 	}
 
-	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, ToSchema)]
+	#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	pub enum Typeahead {
 		#[serde(rename = "true")]
 		True,
@@ -549,22 +573,17 @@ mod subreddit_search_query {
 		None,
 	}
 
-	#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, IntoParams)]
-	#[into_params(parameter_in = Query)]
+	#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	pub struct SubredditSearchQuery {
-		#[param(ignore)]
 		#[serde(flatten)]
 		pub listing: ListingQuery,
-		#[param(rename = "q")]
 		#[serde(rename = "q")]
 		pub query: String,
 		pub search_query_id: Option<String>,
 		pub show_users: Option<bool>,
 		#[serde(default, with = "crate::service::query_codec::option_on_off", skip_serializing_if = "Option::is_none")]
 		pub include_over_18: Option<bool>,
-		#[param(inline)]
 		pub sort: Option<SubredditSearchSort>,
-		#[param(value_type = String)]
 		pub typeahead_active: Option<Typeahead>,
 	}
 }

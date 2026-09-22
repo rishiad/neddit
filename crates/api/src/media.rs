@@ -167,7 +167,7 @@ impl MediaSigner {
 	pub fn media_url(&self, target: &Url) -> Result<String, MediaUrlError> {
 		self.validate_media_target(target)?;
 		let target = target.as_str();
-		let signature = self.signature(target);
+		let signature = self.sign(None, target);
 		let encoded = URL_SAFE_NO_PAD.encode(target);
 		Ok(format!("{MEDIA_ROUTE}/{signature}/{encoded}"))
 	}
@@ -181,16 +181,7 @@ impl MediaSigner {
 	}
 
 	pub fn decode_target(&self, signature: &str, encoded: &str) -> Result<Url, MediaUrlError> {
-		let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| MediaUrlError::InvalidEncoding)?;
-		let target = std::str::from_utf8(&bytes).map_err(|_| MediaUrlError::InvalidEncoding)?;
-		let supplied = URL_SAFE_NO_PAD.decode(signature).map_err(|_| MediaUrlError::InvalidSignature)?;
-		let mut verifier = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts keys of any size");
-		verifier.update(self.policy_scope.as_bytes());
-		verifier.update(&[0]);
-		verifier.update(target.as_bytes());
-		verifier.verify_slice(&supplied).map_err(|_| MediaUrlError::InvalidSignature)?;
-
-		let target = Url::parse(target).map_err(|_| MediaUrlError::InvalidTarget)?;
+		let target = self.decode_signed_target(None, signature, encoded)?;
 		self.validate_media_target(&target)?;
 		Ok(target)
 	}
@@ -205,21 +196,20 @@ impl MediaSigner {
 
 	pub(crate) fn scoped_url(&self, route: &str, scope: &str, target: &Url) -> String {
 		let target = target.as_str();
-		let signature = self.scoped_signature(scope, target);
+		let signature = self.sign(Some(scope), target);
 		let encoded = URL_SAFE_NO_PAD.encode(target);
 		format!("{route}/{signature}/{encoded}")
 	}
 
 	pub(crate) fn decode_scoped_target(&self, scope: &str, signature: &str, encoded: &str) -> Result<Url, MediaUrlError> {
+		self.decode_signed_target(Some(scope), signature, encoded)
+	}
+
+	fn decode_signed_target(&self, scope: Option<&str>, signature: &str, encoded: &str) -> Result<Url, MediaUrlError> {
 		let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| MediaUrlError::InvalidEncoding)?;
 		let target = std::str::from_utf8(&bytes).map_err(|_| MediaUrlError::InvalidEncoding)?;
 		let supplied = URL_SAFE_NO_PAD.decode(signature).map_err(|_| MediaUrlError::InvalidSignature)?;
-		let mut verifier = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts keys of any size");
-		verifier.update(self.policy_scope.as_bytes());
-		verifier.update(&[0]);
-		verifier.update(scope.as_bytes());
-		verifier.update(&[0]);
-		verifier.update(target.as_bytes());
+		let verifier = self.authenticator(scope, target);
 		verifier.verify_slice(&supplied).map_err(|_| MediaUrlError::InvalidSignature)?;
 		Url::parse(target).map_err(|_| MediaUrlError::InvalidTarget)
 	}
@@ -253,16 +243,7 @@ impl MediaSigner {
 	}
 
 	fn rewrite_absolute_url(&self, original: &str) -> Option<String> {
-		let decoded = if original.starts_with("//") {
-			format!("https:{original}")
-		} else {
-			original.to_string()
-		}
-		.replace("&amp;", "&");
-		let mut target = Url::parse(&decoded).ok()?;
-		if !matches!(target.scheme(), "http" | "https") || !target.username().is_empty() || target.password().is_some() {
-			return None;
-		}
+		let mut target = parse_http_url(original)?;
 		let host = target.host_str()?.to_ascii_lowercase();
 
 		if self.domains.is_media_host(&host) {
@@ -277,15 +258,7 @@ impl MediaSigner {
 			}
 			return Some(rewritten);
 		}
-		if self.domains.is_navigation_host(&host) {
-			return Some(local_path(&target));
-		}
-		if self.domains.is_shortlink_host(&host) {
-			let path = target.path().trim_start_matches('/');
-			target.set_path(&format!("/comments/{path}"));
-			return Some(local_path(&target));
-		}
-		None
+		rewrite_navigation_target(&mut target, &self.domains)
 	}
 
 	fn rewrite_media_reference(&self, reference: &str, source: &Url) -> Result<String, MediaUrlError> {
@@ -297,38 +270,42 @@ impl MediaSigner {
 		self.media_url(&target)
 	}
 
-	fn signature(&self, target: &str) -> String {
-		let mut signer = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts keys of any size");
-		signer.update(self.policy_scope.as_bytes());
-		signer.update(&[0]);
-		signer.update(target.as_bytes());
-		URL_SAFE_NO_PAD.encode(signer.finalize().into_bytes())
+	fn sign(&self, scope: Option<&str>, target: &str) -> String {
+		URL_SAFE_NO_PAD.encode(self.authenticator(scope, target).finalize().into_bytes())
 	}
 
-	fn scoped_signature(&self, scope: &str, target: &str) -> String {
+	fn authenticator(&self, scope: Option<&str>, target: &str) -> HmacSha256 {
 		let mut signer = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts keys of any size");
 		signer.update(self.policy_scope.as_bytes());
 		signer.update(&[0]);
-		signer.update(scope.as_bytes());
-		signer.update(&[0]);
+		if let Some(scope) = scope {
+			signer.update(scope.as_bytes());
+			signer.update(&[0]);
+		}
 		signer.update(target.as_bytes());
-		URL_SAFE_NO_PAD.encode(signer.finalize().into_bytes())
+		signer
 	}
 }
 
 fn rewrite_navigation(url: &str, domains: &DomainPolicy) -> Option<String> {
-	let decoded = if url.starts_with("//") { format!("https:{url}") } else { url.to_owned() }.replace("&amp;", "&");
-	let mut target = Url::parse(&decoded).ok()?;
-	if !matches!(target.scheme(), "http" | "https") || !target.username().is_empty() || target.password().is_some() {
-		return None;
-	}
+	let mut target = parse_http_url(url)?;
+	rewrite_navigation_target(&mut target, domains)
+}
+
+fn parse_http_url(value: &str) -> Option<Url> {
+	let decoded = if value.starts_with("//") { format!("https:{value}") } else { value.to_owned() }.replace("&amp;", "&");
+	let target = Url::parse(&decoded).ok()?;
+	(matches!(target.scheme(), "http" | "https") && target.username().is_empty() && target.password().is_none()).then_some(target)
+}
+
+fn rewrite_navigation_target(target: &mut Url, domains: &DomainPolicy) -> Option<String> {
 	let host = target.host_str()?.to_ascii_lowercase();
 	if domains.is_navigation_host(&host) {
-		Some(local_path(&target))
+		Some(local_path(target))
 	} else if domains.is_shortlink_host(&host) {
 		let path = target.path().trim_start_matches('/');
 		target.set_path(&format!("/comments/{path}"));
-		Some(local_path(&target))
+		Some(local_path(target))
 	} else {
 		None
 	}

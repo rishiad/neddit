@@ -1,9 +1,8 @@
 use super::Thing;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use utoipa::ToSchema;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct User {
 	pub id: String,
 	pub name: String,
@@ -21,7 +20,7 @@ pub struct User {
 	pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TrophyList {
 	pub kind: String,
 	pub data: TrophyListData,
@@ -29,14 +28,14 @@ pub struct TrophyList {
 	pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TrophyListData {
 	pub trophies: Vec<Thing<Trophy>>,
 	#[serde(flatten)]
 	pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Trophy {
 	pub icon_70: String,
 	pub name: String,

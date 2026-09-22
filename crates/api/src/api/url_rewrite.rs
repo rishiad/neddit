@@ -14,9 +14,8 @@ pub(super) fn with_reddit_urls(router: Router, signer: MediaSigner) -> Router {
 }
 
 async fn rewrite_reddit_urls(State(signer): State<MediaSigner>, request: Request, next: Next) -> Response {
-	let is_openapi = request.uri().path() == "/openapi.json";
 	let response = next.run(request).await;
-	if is_openapi || !is_json(&response) {
+	if !is_json(&response) {
 		return response;
 	}
 
@@ -61,4 +60,3 @@ fn is_json(response: &Response) -> bool {
 		.and_then(|value| value.to_str().ok())
 		.is_some_and(|value| value.starts_with("application/json"))
 }
-

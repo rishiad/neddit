@@ -101,4 +101,3 @@ fn update_dist<T>(listing: &mut Listing<T>) {
 		listing.data.dist = Some(listing.data.children.len() as u64);
 	}
 }
-

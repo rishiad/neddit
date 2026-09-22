@@ -218,4 +218,3 @@ pub enum ConfigError {
 	#[error("domains contain an invalid entry")]
 	Domains(#[source] MediaUrlError),
 }
-

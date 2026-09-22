@@ -2,7 +2,6 @@ use super::AuthError;
 use serde::Deserialize;
 use serde_json::json;
 use std::{collections::HashMap, time::Duration};
-use tegen::tegen::TextGenerator;
 use tokio::time::{sleep, timeout, Instant};
 use tracing::{debug, trace, warn};
 use wreq::Client as WreqClient;
@@ -89,7 +88,6 @@ impl Credentials {
 	pub(super) fn expires_at(&self) -> Instant {
 		self.expires_at
 	}
-
 }
 
 #[derive(Deserialize)]
@@ -266,13 +264,17 @@ impl AndroidDevice {
 		let android_version = fastrand::u8(9..=14);
 		let user_agent = format!("Reddit/{app_version}/Android {android_version}");
 		let qos = format!("{:.3}", fastrand::u32(1000..=100_000) as f32 / 1000.0);
-		let codecs = TextGenerator::new().generate("available-codecs=video/avc, video/hevc{, video/x-vnd.on2.vp9|}");
+		let codecs = if fastrand::bool() {
+			"available-codecs=video/avc, video/hevc, video/x-vnd.on2.vp9"
+		} else {
+			"available-codecs=video/avc, video/hevc"
+		};
 		let headers = HashMap::from([
 			("User-Agent".to_owned(), user_agent.clone()),
 			("x-reddit-retry".to_owned(), "algo=no-retries".to_owned()),
 			("x-reddit-compression".to_owned(), "1".to_owned()),
 			("x-reddit-qos".to_owned(), qos),
-			("x-reddit-media-codecs".to_owned(), codecs),
+			("x-reddit-media-codecs".to_owned(), codecs.to_owned()),
 			("Content-Type".to_owned(), "application/json; charset=UTF-8".to_owned()),
 			("client-vendor-id".to_owned(), uuid.clone()),
 			("X-Reddit-Device-Id".to_owned(), uuid),

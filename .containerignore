@@ -1,0 +1,7 @@
+.git
+.jj
+.env
+config.toml
+data
+result
+target

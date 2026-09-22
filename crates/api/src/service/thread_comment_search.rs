@@ -4,7 +4,7 @@ use url::form_urlencoded::Serializer;
 
 use crate::{
 	models::{Comment, PublicThing},
-	parsing::thread_comment_search::parse_thread_comment_ids,
+	parsing::parse_thread_comment_ids,
 	service::{
 		reddit::{validate_id36, validate_subreddit},
 		CommentSort, InfoQuery, RedditService, ServiceError,
@@ -64,4 +64,3 @@ fn thread_comment_search_path(subreddit: &str, post_id: &str, query: &str, sort:
 		.append_pair("render-mode", "partial");
 	format!("/svc/shreddit/r/{subreddit}/{post_id}/pdp-comment-search-results?{}", parameters.finish())
 }
-

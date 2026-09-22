@@ -7,15 +7,13 @@ use crate::{
 mod session;
 pub use session::Sessions;
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Request {
 	pub q: String,
 	pub kind: Mode,
 	pub sort: Option<String>,
 	/// Reddit Top window: hour, day, week, month, year, or all. Defaults to all.
-	#[param(inline)]
 	pub t: Option<ListingTime>,
 	pub limit: Option<u8>,
 	/// Include adult results in every search mode. Defaults to false.
@@ -43,7 +41,7 @@ impl Request {
 		r
 	}
 }
-#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Page {
 	pub items: Vec<PublicThing>,
 	/// One-based page number within the retained search session.

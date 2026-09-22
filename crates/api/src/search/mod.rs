@@ -1,4 +1,4 @@
-//! QL syntax, validation and deterministic local predicates. See docs/query-language.md.
+//! QL syntax, validation, and deterministic local predicates.
 mod engine;
 pub use engine::{Page, Request, Sessions};
 
@@ -15,7 +15,7 @@ pub const MAX_NODES: usize = 256;
 pub const MAX_DEPTH: usize = 32;
 pub const TEXT_PROFILE: &str = "nfc-caseless-0.2.2-nfc-0.1.25-ql1";
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
 	#[default]
@@ -40,7 +40,7 @@ impl Mode {
 	}
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, thiserror::Error, utoipa::ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, thiserror::Error)]
 #[error("{code}: {message} (bytes {start}..{end})")]
 pub struct Diagnostic {
 	pub code: &'static str,
@@ -55,6 +55,19 @@ impl Diagnostic {
 			message: message.into(),
 			start: span.0,
 			end: span.1,
+		}
+	}
+
+	pub fn status(&self) -> axum::http::StatusCode {
+		use axum::http::StatusCode;
+		match self.code {
+			"not_found" => StatusCode::NOT_FOUND,
+			"rate_limited" => StatusCode::TOO_MANY_REQUESTS,
+			"storage_full" | "storage_unavailable" | "execution_busy" => StatusCode::SERVICE_UNAVAILABLE,
+			"invalid_cursor" => StatusCode::GONE,
+			"source_failed" => StatusCode::BAD_GATEWAY,
+			"execution_timeout" => StatusCode::GATEWAY_TIMEOUT,
+			_ => StatusCode::BAD_REQUEST,
 		}
 	}
 }

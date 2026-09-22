@@ -1,140 +1,77 @@
-mod docs;
-mod error;
-mod public_routes;
 mod query;
 mod response;
 mod routes;
 mod url_rewrite;
 
 use crate::{media::MediaSigner, service::RedditService};
-use axum::Router;
-use utoipa_axum::{router::OpenApiRouter, routes};
+use axum::{
+	extract::{rejection::QueryRejection, Query},
+	http::StatusCode,
+	response::{IntoResponse, Response},
+	routing::{get, post},
+	Json, Router,
+};
+
+type DiagnosticResponse = (StatusCode, Json<crate::search::Diagnostic>);
+
+fn decode_query<T>(query: Result<Query<T>, QueryRejection>, message: &'static str) -> Result<T, DiagnosticResponse> {
+	query.map(|Query(value)| value).map_err(|_| {
+		diagnostic(crate::search::Diagnostic {
+			code: "invalid_value",
+			message: message.into(),
+			start: 0,
+			end: 0,
+		})
+	})
+}
+
+fn diagnostic(error: crate::search::Diagnostic) -> DiagnosticResponse {
+	(error.status(), Json(error))
+}
 
 pub fn router(service: RedditService, custom_feeds_enabled: bool) -> Router {
-	let mut documented = docs::router().merge(routes::router()).merge(public_routes::router()).routes(routes!(ql_search));
+	let mut router = Router::new().merge(routes::router()).route("/search/ql", get(ql_search));
 	if custom_feeds_enabled {
-		let create = OpenApiRouter::new()
-			.routes(routes!(create_feed))
-			.route_layer(axum::extract::DefaultBodyLimit::max(16 * 1024));
-		documented = documented.routes(routes!(custom_feed)).routes(routes!(saved_feed)).merge(create);
+		router = router
+			.route("/feed", get(custom_feed))
+			.route("/feeds/{id}", get(saved_feed))
+			.route("/feeds", post(create_feed).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)));
 	}
-	docs::finish(documented, service)
+	router.with_state(service)
 }
 
-/// Execute validated QL against bounded REST sources. Cursors expire after 15 minutes or eviction.
-#[utoipa::path(get, path = "/search/ql", params(crate::search::Request), responses(
-	(status = 200, body = crate::search::Page),
-	(status = 400, body = crate::search::Diagnostic),
-	(status = 502, body = crate::search::Diagnostic),
-	(status = 503, body = crate::search::Diagnostic),
-	(status = 504, body = crate::search::Diagnostic)
-))]
-async fn ql_search(
-	axum::extract::State(service): axum::extract::State<RedditService>,
-	query: Result<axum::extract::Query<crate::search::Request>, axum::extract::rejection::QueryRejection>,
-) -> axum::response::Response {
-	use axum::response::IntoResponse;
-	let result: Result<axum::Json<crate::search::Page>, (axum::http::StatusCode, axum::Json<crate::search::Diagnostic>)> = async {
-		let axum::extract::Query(request) = query.map_err(|_| {
-			(
-				axum::http::StatusCode::BAD_REQUEST,
-				axum::Json(crate::search::Diagnostic {
-					code: "invalid_value",
-					message: "Invalid or obsolete search request controls".into(),
-					start: 0,
-					end: 0,
-				}),
-			)
-		})?;
-		service.search_ql(&request).await.map(axum::Json).map_err(|e| {
-			let status = match e.code {
-				"source_failed" => axum::http::StatusCode::BAD_GATEWAY,
-				"execution_timeout" => axum::http::StatusCode::GATEWAY_TIMEOUT,
-				"execution_busy" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
-				_ => axum::http::StatusCode::BAD_REQUEST,
-			};
-			(status, axum::Json(e))
-		})
+async fn ql_search(axum::extract::State(service): axum::extract::State<RedditService>, query: Result<Query<crate::search::Request>, QueryRejection>) -> Response {
+	let result: Result<Json<crate::search::Page>, DiagnosticResponse> = async {
+		let request = decode_query(query, "Invalid or obsolete search request controls")?;
+		service.search_ql(&request).await.map(Json).map_err(diagnostic)
 	}
 	.await;
 	result.into_response()
 }
 
-/// Build a snapshot-backed post feed from native Reddit listings and local QL filters.
-#[utoipa::path(get, path = "/feed", params(crate::feed::Request), responses(
-	(status = 200, body = crate::feed::FeedPage),
-	(status = 400, body = crate::search::Diagnostic),
-	(status = 410, body = crate::search::Diagnostic),
-	(status = 502, body = crate::search::Diagnostic),
-	(status = 504, body = crate::search::Diagnostic)
-))]
-async fn custom_feed(
-	axum::extract::State(service): axum::extract::State<RedditService>,
-	query: Result<axum::extract::Query<crate::feed::Request>, axum::extract::rejection::QueryRejection>,
-) -> axum::response::Response {
-	use axum::response::IntoResponse;
-	let result: Result<axum::Json<crate::feed::FeedPage>, (axum::http::StatusCode, axum::Json<crate::search::Diagnostic>)> = async {
-		let axum::extract::Query(request) = query.map_err(|_| {
-			(
-				axum::http::StatusCode::BAD_REQUEST,
-				axum::Json(crate::search::Diagnostic {
-					code: "invalid_value",
-					message: "Invalid or obsolete feed request controls".into(),
-					start: 0,
-					end: 0,
-				}),
-			)
-		})?;
-		service.custom_feed(&request).await.map(axum::Json).map_err(|error| {
-			let status = crate::feed::status(&error);
-			(status, axum::Json(error))
-		})
+async fn custom_feed(axum::extract::State(service): axum::extract::State<RedditService>, query: Result<Query<crate::feed::Request>, QueryRejection>) -> Response {
+	let result: Result<Json<crate::feed::FeedPage>, DiagnosticResponse> = async {
+		let request = decode_query(query, "Invalid or obsolete feed request controls")?;
+		service.custom_feed(&request).await.map(Json).map_err(diagnostic)
 	}
 	.await;
 	result.into_response()
 }
 
-/// Save an immutable feed definition. Page and cursor controls are not accepted.
-#[utoipa::path(post, path = "/feeds", request_body = crate::feed::Request, responses(
-	(status = 201, body = crate::feed::SavedFeed),
-	(status = 400, body = crate::search::Diagnostic),
-	(status = 404, body = crate::search::Diagnostic),
-	(status = 413, description = "Definition body exceeds 16 KiB"),
-	(status = 429, body = crate::search::Diagnostic),
-	(status = 503, body = crate::search::Diagnostic)
-))]
 async fn create_feed(
 	axum::extract::State(service): axum::extract::State<RedditService>,
 	axum::Json(request): axum::Json<crate::feed::Request>,
-) -> Result<(axum::http::StatusCode, axum::Json<crate::feed::SavedFeed>), (axum::http::StatusCode, axum::Json<crate::search::Diagnostic>)> {
-	service
-		.save_feed(&request)
-		.await
-		.map(|feed| (axum::http::StatusCode::CREATED, axum::Json(feed)))
-		.map_err(|error| (crate::feed::status(&error), axum::Json(error)))
+) -> Result<(StatusCode, Json<crate::feed::SavedFeed>), DiagnosticResponse> {
+	service.save_feed(&request).await.map(|feed| (StatusCode::CREATED, Json(feed))).map_err(diagnostic)
 }
 
-/// Execute a saved definition, or continue one of its snapshots.
-#[utoipa::path(get, path = "/feeds/{id}", params(("id" = String, Path), crate::feed::Continuation), responses(
-	(status = 200, body = crate::feed::FeedPage),
-	(status = 400, body = crate::search::Diagnostic),
-	(status = 404, body = crate::search::Diagnostic),
-	(status = 410, body = crate::search::Diagnostic),
-	(status = 502, body = crate::search::Diagnostic),
-	(status = 503, body = crate::search::Diagnostic),
-	(status = 504, body = crate::search::Diagnostic)
-))]
 async fn saved_feed(
 	axum::extract::State(service): axum::extract::State<RedditService>,
 	axum::extract::Path(id): axum::extract::Path<String>,
 	axum::extract::Query(continuation): axum::extract::Query<crate::feed::Continuation>,
-) -> Result<axum::Json<crate::feed::FeedPage>, (axum::http::StatusCode, axum::Json<crate::search::Diagnostic>)> {
-	let result = async {
-		let request = service.saved_feed(&id, continuation).await?;
-		service.custom_feed(&request).await.map(axum::Json)
-	}
-	.await;
-	result.map_err(|error| (crate::feed::status(&error), axum::Json(error)))
+) -> Result<Json<crate::feed::FeedPage>, DiagnosticResponse> {
+	let request = service.saved_feed(&id, continuation).await.map_err(diagnostic)?;
+	service.custom_feed(&request).await.map(Json).map_err(diagnostic)
 }
 
 pub fn with_reddit_urls(router: Router, signer: MediaSigner) -> Router {

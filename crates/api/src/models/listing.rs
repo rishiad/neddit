@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use utoipa::ToSchema;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Thing<T> {
 	pub kind: String,
 	pub data: T,
@@ -10,7 +9,7 @@ pub struct Thing<T> {
 	pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ListingData<T> {
 	pub after: Option<String>,
 	pub dist: Option<u64>,
@@ -23,7 +22,7 @@ pub struct ListingData<T> {
 	pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Listing<T> {
 	pub kind: String,
 	pub data: ListingData<T>,
@@ -31,7 +30,7 @@ pub struct Listing<T> {
 	pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PublicThing {
 	Comment(Thing<super::Comment>),

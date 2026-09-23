@@ -56,6 +56,13 @@ impl RedditService {
 		self.post_listing(None, sort, query).await
 	}
 
+	pub async fn all_posts(&self, sort: PostSort, query: &ListingQuery) -> Result<Listing<Thing<Post>>, ServiceError> {
+		if sort == PostSort::Best {
+			return Err(invalid_parameter("sort", sort.as_str()));
+		}
+		self.post_listing(Some("all"), sort, query).await
+	}
+
 	pub(crate) async fn recent_ql_comments(&self, community: &str, query: &ListingQuery) -> Result<Listing<crate::models::PublicThing>, ServiceError> {
 		validate_subreddit(community)?;
 		validate_listing_query(query)?;

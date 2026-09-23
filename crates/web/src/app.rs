@@ -103,7 +103,8 @@ pub async fn front_page(
 ) -> Result<FeedTemplate, AppError> {
 	let (sort, sort_name) = parse_post_sort(query.sort.as_deref(), false)?;
 	let (time, time_name) = parse_time(sort == PostSort::Top, query.t.as_deref())?;
-	let (listing_query, page) = query.listing(time);
+	let (mut listing_query, page) = query.listing(time);
+	listing_query.geo_filter = Some("GLOBAL".to_owned());
 	let listing = service.front_page_posts(sort, &listing_query).await?;
 	let before = listing
 		.data

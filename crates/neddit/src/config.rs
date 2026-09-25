@@ -42,7 +42,7 @@ pub struct DomainConfig {
 	pub media: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MediaConfig {
 	pub image_display: ImageDisplay,
@@ -152,15 +152,6 @@ impl Default for ServerConfig {
 			api: true,
 			allow_nsfw: true,
 			custom_feeds: true,
-		}
-	}
-}
-
-impl Default for MediaConfig {
-	fn default() -> Self {
-		Self {
-			image_display: ImageDisplay::Link,
-			signing_key_file: None,
 		}
 	}
 }

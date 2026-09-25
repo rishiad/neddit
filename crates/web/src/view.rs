@@ -3,7 +3,7 @@ mod controls;
 mod format;
 
 use comments::{comment_parent_url, comment_url};
-pub use comments::{comment_tree, loaded_comment_tree, search_comment_tree};
+pub use comments::{comment_tree, search_comment_tree};
 pub(crate) use controls::listing_time_choices;
 pub use controls::{comment_sort_controls, feed_controls, search_choices, user_controls};
 use format::{age, compact, signed_compact};

@@ -1,5 +1,6 @@
 mod content;
 mod error;
+mod graphql;
 mod more_children;
 mod public_read;
 mod query_codec;

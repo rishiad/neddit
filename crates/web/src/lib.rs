@@ -33,8 +33,8 @@ const CONTENT_SECURITY_POLICY: &str =
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageDisplay {
-	Inline,
 	#[default]
+	Inline,
 	Link,
 }
 
@@ -100,6 +100,7 @@ pub fn router(service: RedditService, media: MediaProxy, image_display: ImageDis
 		.route("/user/{username}", get(app::user_posts))
 		.route("/user/{username}/comments", get(app::user_comments))
 		.route("/r/{subreddit}", get(app::subreddit_feed))
+		.route("/r/{subreddit}/", get(app::subreddit_feed))
 		.route("/r/{subreddit}/wiki", get(app::wiki_root))
 		.route("/r/{subreddit}/wiki/", get(app::wiki_root))
 		.route("/r/{subreddit}/wiki/{*page}", get(app::wiki_page))

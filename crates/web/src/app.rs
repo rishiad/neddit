@@ -7,8 +7,7 @@ use neddit_api::{
 	models::{Post, PostComments, PublicThing},
 	server::MediaProxy,
 	service::{
-		CommentQuery, CommentSort, ListingQuery, ListingTime, MoreChildrenQuery, PostSort, RedditService, ServiceError, ThreadCommentSearchQuery, UserHistoryQuery,
-		UserHistorySort, WikiPageQuery,
+		CommentQuery, CommentSort, ListingQuery, ListingTime, PostSort, RedditService, ServiceError, ThreadCommentSearchQuery, UserHistoryQuery, UserHistorySort, WikiPageQuery,
 	},
 };
 use serde::Deserialize;
@@ -18,15 +17,13 @@ use crate::{
 	markdown,
 	view::{
 		comment_sort_controls, comment_tree, community_view, feed_controls, feed_item, feed_pagination, gallery_view, generated_wiki_index, has_public_wiki_pages, has_wiki_page,
-		is_external_video, loaded_comment_tree, post_result, post_view, search_comment_tree, search_result, subreddit_feed_item, user_controls, user_profile, wiki_path,
-		wiki_view, FeedTemplate, GalleryTemplate, MoreCommentsTemplate, PostContentTemplate, PostTemplate, SearchResultView, SubredditTemplate, UserTemplate, VideoPlayerTemplate,
-		WikiTemplate,
+		is_external_video, post_result, post_view, search_comment_tree, search_result, subreddit_feed_item, user_controls, user_profile, wiki_path, wiki_view, FeedTemplate,
+		GalleryTemplate, MoreCommentsTemplate, PostContentTemplate, PostTemplate, SearchResultView, SubredditTemplate, UserTemplate, VideoPlayerTemplate, WikiTemplate,
 	},
 	ImageDisplay, WebFeatures,
 };
 
 const PAGE_SIZE: u8 = 25;
-const MORE_COMMENTS_BATCH_SIZE: usize = 100;
 
 struct PostMedia {
 	video: MediaProxy,
@@ -78,9 +75,8 @@ pub struct PostPath {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct MoreCommentsQuery {
-	children: String,
+	cursor: String,
 	link_id: String,
-	parent_id: String,
 	sort: Option<String>,
 }
 
@@ -385,31 +381,10 @@ pub async fn more_comments(
 	Query(query): Query<MoreCommentsQuery>,
 ) -> Result<MoreCommentsTemplate, AppError> {
 	let (sort, sort_name) = parse_comment_sort(query.sort.as_deref())?;
-	let mut children: Vec<String> = query.children.split(',').filter(|child| !child.is_empty()).map(str::to_owned).collect();
-	let remaining = if children.len() > MORE_COMMENTS_BATCH_SIZE {
-		children.split_off(MORE_COMMENTS_BATCH_SIZE)
-	} else {
-		Vec::new()
-	};
-	let response = service
-		.more_children(&MoreChildrenQuery {
-			children,
-			link_id: query.link_id.clone(),
-			limit_children: Some(false),
-			sort: Some(sort),
-			..MoreChildrenQuery::default()
-		})
-		.await?;
-
+	let article = query.link_id.strip_prefix("t3_").ok_or(AppError::PostNotFound)?;
+	let listing = service.graphql_more_comments(article, &query.cursor, sort).await?;
 	Ok(MoreCommentsTemplate {
-		comment_tree: loaded_comment_tree(
-			&response.json.data.things,
-			&query.parent_id,
-			&query.link_id,
-			sort_name,
-			&remaining,
-			markdown::Renderer::new(&signer, image_display),
-		),
+		comment_tree: comment_tree(&listing.data.children, &query.link_id, sort_name, markdown::Renderer::new(&signer, image_display)),
 	})
 }
 

@@ -23,6 +23,8 @@ use self::oauth::{CredentialLease, OAuthHandle};
 
 const REDDIT_URL_BASE: &str = "https://oauth.reddit.com";
 const REDDIT_URL_BASE_HOST: &str = "oauth.reddit.com";
+const REDDIT_GRAPHQL_URL: &str = "https://gql-fed.reddit.com/";
+const POST_COMMENTS_HASH: &str = "314f29c2494fd78c7844ef2c6b09acb4bef5b37ab50b4ddc01691d6d5c8433f8";
 const MAX_UPSTREAM_BYTES: usize = 8 * 1024 * 1024;
 const EXTERNAL_RANGE_CHUNK: u64 = 8 * 1024 * 1024;
 const MAX_REDDIT_REDIRECTS: usize = 4;
@@ -263,6 +265,67 @@ impl RedditClient {
 		tokio::time::timeout(Duration::from_secs(20), cache.json(key, ttl, self.fetch_json(path)))
 			.await
 			.map_err(|_| ClientError::Timeout)?
+	}
+
+	/// Fetch the Android app's persisted post-comment query with the current mobile token.
+	pub(crate) async fn post_comments_graphql(&self, variables: Value) -> Result<Value, ClientError> {
+		if let Some(cache) = &self.cache {
+			let key = format!("reddit-graphql-v1:{}", crate::storage::fingerprint(variables.to_string().as_bytes()));
+			return tokio::time::timeout(Duration::from_secs(20), cache.json(key, 60, self.fetch_post_comments_graphql(variables)))
+				.await
+				.map_err(|_| ClientError::Timeout)?;
+		}
+		tokio::time::timeout(Duration::from_secs(20), self.fetch_post_comments_graphql(variables))
+			.await
+			.map_err(|_| ClientError::Timeout)?
+	}
+
+	async fn fetch_post_comments_graphql(&self, variables: Value) -> Result<Value, ClientError> {
+		let lease = self.oauth.acquire().await?;
+		let mut request = self.http.post(REDDIT_GRAPHQL_URL);
+		for (key, value) in lease.headers() {
+			if !key.eq_ignore_ascii_case("content-type") {
+				request = request.header(key, value);
+			}
+		}
+		let payload = serde_json::json!({
+			"operationName": "PostComments",
+			"variables": variables,
+			"extensions": { "persistedQuery": { "version": 1, "sha256Hash": POST_COMMENTS_HASH } },
+		});
+		let response = request.json(&payload).send().await.map_err(|source| ClientError::Request {
+			url: REDDIT_GRAPHQL_URL.into(),
+			source,
+		})?;
+		let status = response.status();
+		if !status.is_success() {
+			return Err(ClientError::UnexpectedStatus {
+				path: "PostComments".into(),
+				status: status.as_u16(),
+			});
+		}
+		let mut response = response;
+		if response.content_length().is_some_and(|length| length > MAX_UPSTREAM_BYTES as u64) {
+			return Err(ClientError::BodyTooLarge);
+		}
+		let mut body = Vec::new();
+		while let Some(chunk) = response.chunk().await.map_err(|source| ClientError::Body {
+			path: "PostComments".into(),
+			source,
+		})? {
+			append_body_chunk(&mut body, &chunk)?;
+		}
+		let json: Value = serde_json::from_slice(&body).map_err(|source| ClientError::Decode {
+			path: "PostComments".into(),
+			source,
+		})?;
+		if json["errors"].as_array().is_some_and(|errors| !errors.is_empty()) {
+			return Err(ClientError::InvalidEnvelope);
+		}
+		if json.pointer("/data/postInfoById/commentForest/trees").and_then(Value::as_array).is_none() {
+			return Err(ClientError::InvalidEnvelope);
+		}
+		Ok(json)
 	}
 
 	async fn fetch_json(&self, path: String) -> Result<Value, ClientError> {

@@ -1,6 +1,6 @@
 use crate::client::RedditClient;
 use crate::models::{Listing, Post, PostComments, PostDuplicates, Subreddit, Thing, User};
-use crate::parsing::{parse_comments, parse_post_duplicates, parse_post_listing, parse_subreddit, parse_subreddit_listing, parse_user};
+use crate::parsing::{parse_post_duplicates, parse_post_listing, parse_subreddit, parse_subreddit_listing, parse_user};
 use crate::service::query_codec;
 use crate::service::sanitize::{clear_listing_modhash, clear_post_comments_modhash};
 use crate::service::{ContentPolicy, ServiceError};
@@ -117,12 +117,12 @@ impl RedditService {
 	}
 
 	pub async fn post_comments(&self, article: &str, query: &CommentQuery) -> Result<PostComments, ServiceError> {
-		self.comments(None, article, query).await
+		self.comments(article, query).await
 	}
 
 	pub async fn subreddit_post_comments(&self, subreddit: &str, article: &str, query: &CommentQuery) -> Result<PostComments, ServiceError> {
 		validate_subreddit(subreddit)?;
-		self.comments(Some(subreddit), article, query).await
+		self.comments(article, query).await
 	}
 
 	pub async fn subreddit_about(&self, subreddit: &str) -> Result<Thing<Subreddit>, ServiceError> {
@@ -192,16 +192,10 @@ impl RedditService {
 		Ok(listing)
 	}
 
-	async fn comments(&self, subreddit: Option<&str>, article: &str, query: &CommentQuery) -> Result<PostComments, ServiceError> {
+	async fn comments(&self, article: &str, query: &CommentQuery) -> Result<PostComments, ServiceError> {
 		validate_id36("article", article)?;
 		validate_comment_query(query)?;
-		let base = match subreddit {
-			Some(subreddit) => format!("/r/{subreddit}/comments/{article}"),
-			None => format!("/comments/{article}"),
-		};
-		let path = with_query(base, query_codec::encode(query));
-		let json = self.client.json(path).await?;
-		let mut comments = parse_comments(&json)?;
+		let mut comments = self.graphql_comments(article, query).await?;
 		clear_post_comments_modhash(&mut comments);
 		self.content.require_post_comments(&comments)?;
 		Ok(comments)
@@ -419,6 +413,7 @@ mod comment_query {
 	#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 	pub struct CommentQuery {
 		pub comment: Option<String>,
+		pub cursor: Option<String>,
 		pub context: Option<u8>,
 		pub depth: Option<u32>,
 		pub limit: Option<u32>,
